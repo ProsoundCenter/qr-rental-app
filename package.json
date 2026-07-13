@@ -1,0 +1,13 @@
+{
+  "name": "qr-rental-asset-manager",
+  "version": "1.0.0",
+  "description": "Phan mem quan ly tai san cho thue bang QR code - khong can cai dat thu vien ngoai (chi dung Node.js core modules)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {}
+}
