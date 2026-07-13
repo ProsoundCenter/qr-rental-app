@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In tem QR - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<style>
+  .label-sheet { display: flex; flex-wrap: wrap; gap: 6mm; margin-top: 14px; }
+  .label {
+    border: 1px dashed #bbb;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 2mm;
+    background: #fff;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .label .code { font-family: "SF Mono", Consolas, monospace; font-weight: 700; }
+  .label .model { color: #333; }
+  .size-S { width: 30mm; height: 20mm; }
+  .size-S .code { font-size: 7.5pt; margin-top: 1mm; }
+  .size-S .model { font-size: 6pt; }
+  .size-S canvas, .size-S img { width: 13mm !important; height: 13mm !important; }
+
+  .size-M { width: 50mm; height: 30mm; }
+  .size-M .code { font-size: 10pt; margin-top: 1.5mm; }
+  .size-M .model { font-size: 7.5pt; }
+  .size-M canvas, .size-M img { width: 20mm !important; height: 20mm !important; }
+
+  .size-L { width: 80mm; height: 50mm; }
+  .size-L .code { font-size: 14pt; margin-top: 2mm; }
+  .size-L .model { font-size: 10pt; }
+  .size-L canvas, .size-L img { width: 32mm !important; height: 32mm !important; }
+
+  @media print {
+    .label { border: none; page-break-inside: avoid; }
+    .label-sheet { gap: 0; }
+    body.printing-single-per-page .label { page-break-after: always; }
+  }
+</style>
+</head>
+<body>
+<div id="nav-container" class="no-print"></div>
+<main>
+  <div class="flex between no-print">
+    <h1>In tem QR</h1>
+    <a href="/index.html" class="btn secondary">&larr; Về danh sách</a>
+  </div>
+
+  <div class="card no-print">
+    <div class="row">
+      <div>
+        <label>Chọn tài sản</label>
+        <select id="assetSelect"></select>
+      </div>
+      <div>
+        <label>Kích thước tem</label>
+        <select id="sizeSelect">
+          <option value="S">Nhỏ — 30 × 20 mm</option>
+          <option value="M" selected>Vừa — 50 × 30 mm</option>
+          <option value="L">Lớn — 80 × 50 mm</option>
+        </select>
+      </div>
+      <div>
+        <label>Số lượng tem cần in (in lại nhiều lần)</label>
+        <input type="number" id="qty" min="1" value="1" step="1">
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button id="printBtn">🖨️ In tem</button>
+      </div>
+    </div>
+    <p class="muted">Mã QR và model có thể chỉnh sửa tại trang <a href="/nhap-kho.html">Nhập kho</a>. Mỗi tem có thể in lại nhiều bản để dán lên nhiều mặt / thay thế tem cũ.</p>
+  </div>
+
+  <div class="card">
+    <h2 class="no-print">Xem trước</h2>
+    <div class="label-sheet" id="sheet"></div>
+  </div>
+</main>
+
+<script src="/js/common.js"></script>
+<script>
+renderNav('/tem.html');
+const params = new URLSearchParams(location.search);
+let assets = [];
+let currentAsset = null;
+
+async function init() {
+  assets = await api('/api/assets');
+  const sel = document.getElementById('assetSelect');
+  sel.innerHTML = assets.map(a => `<option value="${a.id}">${esc(a.qrCode)} — ${esc(a.model)}</option>`).join('');
+  const preselect = params.get('id');
+  if (preselect && assets.find(a => a.id === preselect)) sel.value = preselect;
+  currentAsset = assets.find(a => a.id === sel.value) || assets[0];
+  sel.addEventListener('change', () => {
+    currentAsset = assets.find(a => a.id === sel.value);
+    render();
+  });
+  document.getElementById('sizeSelect').addEventListener('change', render);
+  document.getElementById('qty').addEventListener('input', render);
+  document.getElementById('printBtn').addEventListener('click', () => window.print());
+  render();
+}
+
+function render() {
+  const sheet = document.getElementById('sheet');
+  sheet.innerHTML = '';
+  if (!currentAsset) { sheet.innerHTML = '<div class="empty-state">Chưa có tài sản nào. Hãy nhập kho trước.</div>'; return; }
+  const size = document.getElementById('sizeSelect').value;
+  const qty = Math.max(1, parseInt(document.getElementById('qty').value, 10) || 1);
+  for (let i = 0; i < qty; i++) {
+    const div = document.createElement('div');
+    div.className = 'label size-' + size;
+    const qrHolder = document.createElement('div');
+    div.appendChild(qrHolder);
+    const code = document.createElement('div');
+    code.className = 'code';
+    code.textContent = currentAsset.qrCode;
+    const model = document.createElement('div');
+    model.className = 'model';
+    model.textContent = [currentAsset.brand, currentAsset.model].filter(Boolean).join(' ');
+    div.appendChild(code);
+    div.appendChild(model);
+    sheet.appendChild(div);
+    try {
+      new QRCode(qrHolder, { text: currentAsset.qrCode, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    } catch (e) { qrHolder.textContent = '[QR: ' + currentAsset.qrCode + ']'; }
+  }
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>

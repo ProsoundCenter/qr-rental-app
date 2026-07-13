@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Xuất kho - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <div class="flex between">
+    <h1>Xuất kho theo Show</h1>
+    <a href="/lich-su.html" class="btn secondary">Xem lịch sử show &rarr;</a>
+  </div>
+
+  <!-- STEP 1: pick or create a show -->
+  <div id="pickerSection" class="card">
+    <h2>1. Chọn show đang mở, hoặc tạo show mới</h2>
+    <div id="activeList"></div>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-weight:600;color:var(--primary)">+ Tạo show mới</summary>
+      <form id="createForm" style="margin-top:12px">
+        <div class="row">
+          <div><label>Tên show *</label><input name="showName" required></div>
+          <div><label>Khách hàng</label><input name="customer"></div>
+          <div style="grid-column:1/-1"><label>Địa điểm</label><input name="location"></div>
+          <div><label>Từ ngày giờ *</label><input type="datetime-local" name="startDateTime" required></div>
+          <div><label>Đến ngày giờ *</label><input type="datetime-local" name="endDateTime" required></div>
+        </div>
+        <button type="submit">Tạo show &amp; bắt đầu quét QR</button>
+      </form>
+    </details>
+  </div>
+
+  <!-- STEP 2: scanning -->
+  <div id="scanSection" class="card" style="display:none">
+    <div class="flex between">
+      <h2 id="rentalTitle"></h2>
+      <button class="secondary" id="backBtn">&larr; Chọn show khác</button>
+    </div>
+    <p class="muted" id="rentalMeta"></p>
+
+    <div class="row">
+      <div>
+        <h3>Quét bằng camera điện thoại/máy tính</h3>
+        <div id="reader"></div>
+        <p class="muted" style="font-size:12.5px">Cần cấp quyền camera. Trên điện thoại nên mở trang này qua HTTPS để camera hoạt động.</p>
+      </div>
+      <div>
+        <h3>Hoặc nhập mã thủ công</h3>
+        <form id="manualForm" class="flex">
+          <input id="manualCode" placeholder="Nhập mã QR, VD: TS-00001" class="mono" style="flex:1">
+          <button type="submit">Thêm</button>
+        </form>
+      </div>
+    </div>
+
+    <h3 style="margin-top:16px">Danh sách thiết bị đã xuất</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mã QR</th><th>Nhóm/Model</th><th class="right">Khấu hao trừ</th><th></th></tr></thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+    </div>
+    <div class="flex between" style="margin-top:10px">
+      <div><strong>Tổng giá trị khấu hao đơn hàng:</strong> <span id="totalDep" style="font-size:18px;color:var(--primary-dark);font-weight:700"></span></div>
+      <div class="flex">
+        <a id="exportLink" href="#" class="btn secondary">Xuất CSV</a>
+        <button id="returnBtn" class="success">Thiết bị đã về kho</button>
+        <button id="closeBtn" class="danger">Đóng show</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/js/common.js"></script>
+<script>
+renderNav('/xuat-kho.html');
+let currentRental = null;
+let scanner = null;
+let lastScan = { code: null, time: 0 };
+
+async function loadActive() {
+  const rentals = await api('/api/rentals');
+  const active = rentals.filter(r => r.status === 'active');
+  const el = document.getElementById('activeList');
+  if (!active.length) {
+    el.innerHTML = '<p class="muted">Chưa có show nào đang mở.</p>';
+    return;
+  }
+  el.innerHTML = active.map(r => `
+    <div class="flex between" style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <strong>${esc(r.code)} — ${esc(r.showName)}</strong><br>
+        <span class="muted" style="font-size:12.5px">${esc(r.customer || '—')} · ${esc(r.location || '—')} · ${r.items.length} thiết bị</span>
+      </div>
+      <button class="secondary" data-id="${r.id}">Tiếp tục quét</button>
+    </div>
+  `).join('');
+  el.querySelectorAll('button[data-id]').forEach(btn => {
+    btn.addEventListener('click', () => openRental(btn.dataset.id));
+  });
+}
+
+document.getElementById('createForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  try {
+    const rental = await api('/api/rentals', { method: 'POST', body: JSON.stringify(body) });
+    toast('Đã tạo show ' + rental.code, 'success');
+    openRental(rental.id);
+  } catch (err) { toast(err.message, 'error'); }
+});
+
+async function openRental(id) {
+  currentRental = await api('/api/rentals/' + id);
+  document.getElementById('pickerSection').style.display = 'none';
+  document.getElementById('scanSection').style.display = '';
+  renderRental();
+  startScanner();
+}
+
+function renderRental() {
+  const r = currentRental;
+  document.getElementById('rentalTitle').textContent = r.code + ' — ' + r.showName;
+  document.getElementById('rentalMeta').textContent =
+    `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.startDateTime)} → ${fmtDate(r.endDateTime)}`;
+  document.getElementById('itemsBody').innerHTML = r.items.map(i => `
+    <tr>
+      <td class="mono">${esc(i.qrCode)}</td>
+      <td>${esc(i.brand)} ${esc(i.model)}</td>
+      <td class="right">${money(i.deductionValue)}</td>
+      <td><button class="danger" style="padding:4px 9px;font-size:12px" data-remove="${i.assetId}">Xoá</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="muted center">Chưa quét thiết bị nào</td></tr>';
+  document.getElementById('totalDep').textContent = money(r.totalDepreciationValue);
+  document.getElementById('exportLink').href = '/api/rentals/' + r.id + '/export.csv';
+  document.querySelectorAll('button[data-remove]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await api('/api/rentals/' + currentRental.id + '/items/' + btn.dataset.remove, { method: 'DELETE' });
+      currentRental = await api('/api/rentals/' + currentRental.id);
+      renderRental();
+    });
+  });
+}
+
+async function addCode(code) {
+  code = (code || '').trim();
+  if (!code) return;
+  const now = Date.now();
+  if (lastScan.code === code && now - lastScan.time < 3000) return; // debounce duplicate scans
+  lastScan = { code, time: now };
+  try {
+    const result = await api('/api/rentals/' + currentRental.id + '/scan', {
+      method: 'POST', body: JSON.stringify({ code })
+    });
+    currentRental = result.rental;
+    renderRental();
+    toast('Đã thêm: ' + result.item.qrCode + ' (−' + money(result.item.deductionValue) + ')', 'success');
+    if (navigator.vibrate) navigator.vibrate(80);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('manualForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('manualCode');
+  addCode(input.value);
+  input.value = '';
+  input.focus();
+});
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  stopScanner();
+  currentRental = null;
+  document.getElementById('scanSection').style.display = 'none';
+  document.getElementById('pickerSection').style.display = '';
+  loadActive();
+});
+
+document.getElementById('closeBtn').addEventListener('click', async () => {
+  if (!confirm('Đóng show này? Bạn vẫn có thể xem lại trong Lịch sử.')) return;
+  await api('/api/rentals/' + currentRental.id + '/close', { method: 'POST' });
+  toast('Đã đóng show', 'success');
+  document.getElementById('backBtn').click();
+});
+
+document.getElementById('returnBtn').addEventListener('click', async () => {
+  if (!confirm('Xác nhận toàn bộ thiết bị đã trả về kho?')) return;
+  await api('/api/rentals/' + currentRental.id + '/return', { method: 'POST' });
+  toast('Đã cập nhật thiết bị về kho, sẵn sàng cho thuê tiếp', 'success');
+  document.getElementById('backBtn').click();
+});
+
+function startScanner() {
+  if (typeof Html5Qrcode === 'undefined') {
+    document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera (cần kết nối Internet). Dùng ô nhập mã thủ công bên cạnh.</p>';
+    return;
+  }
+  scanner = new Html5QrcodeScanner('reader', { fps: 10, qrbox: 220 }, false);
+  scanner.render((decodedText) => addCode(decodedText), () => {});
+}
+
+function stopScanner() {
+  if (scanner) {
+    scanner.clear().catch(() => {});
+    scanner = null;
+  }
+}
+
+loadActive().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>

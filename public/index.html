@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tổng quan - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <h1>Tổng quan kho thiết bị cho thuê</h1>
+
+  <div class="grid" id="stats"></div>
+
+  <div class="card">
+    <div class="flex between">
+      <h2>Danh sách tài sản / thiết bị</h2>
+      <div class="flex">
+        <input id="search" placeholder="Tìm theo mã QR, model, nhãn hiệu..." style="min-width:240px">
+        <a href="/nhap-kho.html" class="btn">+ Nhập kho mới</a>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mã QR</th><th>Nhóm</th><th>Chủng loại</th><th>Nhãn hiệu</th><th>Model</th>
+            <th class="right">Giá trị nhập</th><th class="right">Khấu hao/đơn vị</th>
+            <th class="center">Số lần thuê</th><th class="right">Giá trị còn lại</th><th>Trạng thái</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty-state" style="display:none">Chưa có tài sản nào. Bấm "Nhập kho mới" để bắt đầu.</div>
+  </div>
+</main>
+
+<script src="/js/common.js"></script>
+<script>
+renderNav('/index.html');
+let ALL = [];
+
+async function load() {
+  ALL = await api('/api/assets');
+  renderStats();
+  renderTable(ALL);
+}
+
+function renderStats() {
+  const totalImport = ALL.reduce((s, a) => s + Number(a.importValue || 0), 0);
+  const totalRemaining = ALL.reduce((s, a) => s + Number(a.remainingValue || 0), 0);
+  const totalDep = ALL.reduce((s, a) => s + Number(a.totalDepreciated || 0), 0);
+  const rented = ALL.filter(a => a.status === 'rented').length;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${ALL.length}</div><div class="label">Tổng số tài sản</div></div>
+    <div class="stat"><div class="num">${rented}</div><div class="label">Đang cho thuê</div></div>
+    <div class="stat"><div class="num">${money(totalImport)}</div><div class="label">Tổng giá trị nhập</div></div>
+    <div class="stat"><div class="num">${money(totalDep)}</div><div class="label">Tổng khấu hao đã trừ</div></div>
+    <div class="stat"><div class="num">${money(totalRemaining)}</div><div class="label">Tổng giá trị còn lại</div></div>
+  `;
+}
+
+function renderTable(list) {
+  const tbody = document.getElementById('tbody');
+  document.getElementById('empty').style.display = list.length ? 'none' : 'block';
+  tbody.innerHTML = list.map(a => `
+    <tr>
+      <td class="mono">${esc(a.qrCode)}</td>
+      <td>${esc(a.group)}</td>
+      <td>${esc(a.category)}</td>
+      <td>${esc(a.brand)}</td>
+      <td>${esc(a.model)}</td>
+      <td class="right">${money(a.importValue)}</td>
+      <td class="right">${money(a.depreciationUnitValue)}/${a.depreciationType === 'show' ? 'show' : 'tháng'}</td>
+      <td class="center">${a.rentalCount || 0}</td>
+      <td class="right">${money(a.remainingValue)}</td>
+      <td><span class="badge ${a.status}">${a.status === 'rented' ? 'Đang thuê' : 'Sẵn sàng'}</span></td>
+      <td><a href="/nhap-kho.html?id=${a.id}" class="btn secondary" style="padding:5px 10px;font-size:12.5px">Sửa</a></td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('search').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  if (!q) return renderTable(ALL);
+  renderTable(ALL.filter(a =>
+    (a.qrCode || '').toLowerCase().includes(q) ||
+    (a.model || '').toLowerCase().includes(q) ||
+    (a.brand || '').toLowerCase().includes(q) ||
+    (a.group || '').toLowerCase().includes(q) ||
+    (a.category || '').toLowerCase().includes(q)
+  ));
+});
+
+load().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>
