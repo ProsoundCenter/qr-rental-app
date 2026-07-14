@@ -60,6 +60,23 @@ nav.tabs a:hover, nav.tabs a.active {
   font-weight: 600;
 }
 
+.role-badge {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+header.topbar button.secondary {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.5);
+}
+header.topbar button.secondary:hover { background: rgba(255,255,255,0.15); }
+
 main {
   max-width: 1100px;
   margin: 0 auto;
@@ -207,6 +224,54 @@ tr:hover td { background: #f9fafb; }
 }
 
 #reader { width: 100%; max-width: 420px; margin: 0 auto; }
+
+.scan-input {
+  width: 100%;
+  font-size: 22px;
+  padding: 16px 14px;
+  border: 2px solid var(--primary);
+  border-radius: 10px;
+  text-align: center;
+  font-family: "SF Mono", Consolas, monospace;
+}
+
+.scan-flash {
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 700;
+  min-height: 24px;
+  transition: background 0.15s ease;
+  background: #eef2f7;
+  color: var(--muted);
+}
+.scan-flash.ok { background: #dcfce7; color: #166534; }
+.scan-flash.err { background: #fee2e2; color: #991b1b; }
+
+.scan-count {
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--primary-dark);
+  line-height: 1;
+}
+
+.scan-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.scan-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.scan-list-row:first-child { background: #f0f7ff; }
+.scan-list-row:last-child { border-bottom: none; }
 
 .empty-state { text-align: center; padding: 30px; color: var(--muted); }
 
