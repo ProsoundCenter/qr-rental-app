@@ -275,13 +275,31 @@ function xlsxHeaderStyle() {
   };
 }
 
-// Bien ban giao nhan thiet bi theo show: header cong ty, thong tin show, danh muc thiet bi, cho ky ten.
+// Bien ban giao nhan thiet bi theo show: header cong ty, thong tin show, danh muc thiet bi
+// GOP THEO MODEL (so luong) de khach de kiem dem/ban giao — khong hien gia tri khau hao.
 async function downloadRentalXlsx(profile, rental) {
   if (typeof XLSX === 'undefined') { toast('Không tải được thư viện Excel, vui lòng thử lại', 'error'); return; }
   const items = await getRentalItems(rental.id);
   const companyName = (profile.companies && profile.companies.name) || '';
-  const COLS = 9;
-  const headers = ['STT', 'Mã QR', 'Nhóm / Chủng loại', 'Nhãn hiệu', 'Model', 'Kiểu khấu hao', 'Khấu hao trừ (đ)', 'Xuất lúc', 'Trả lúc'];
+
+  const groups = [];
+  const groupMap = new Map();
+  items.forEach(i => {
+    const a = i.assets || {};
+    const key = [a.asset_group || '', a.category || '', a.brand || '', a.model || ''].join('||').toLowerCase();
+    if (!groupMap.has(key)) {
+      const g = { asset_group: a.asset_group || '', category: a.category || '', brand: a.brand || '', model: a.model || '', qty: 0, codes: [] };
+      groupMap.set(key, g);
+      groups.push(g);
+    }
+    const g = groupMap.get(key);
+    g.qty++;
+    g.codes.push(a.qr_code || '');
+  });
+  groups.sort((x, y) => (x.asset_group + x.category + x.brand + x.model).localeCompare(y.asset_group + y.category + y.brand + y.model, 'vi'));
+
+  const COLS = 6;
+  const headers = ['STT', 'Nhóm / Chủng loại', 'Nhãn hiệu', 'Model', 'Số lượng', 'Danh sách mã QR'];
 
   const aoa = [];
   aoa.push([companyName]);
@@ -292,35 +310,31 @@ async function downloadRentalXlsx(profile, rental) {
   aoa.push([]);
   const headerRowIdx = aoa.length;
   aoa.push(headers);
-  items.forEach((i, idx) => {
-    const a = i.assets || {};
+  groups.forEach((g, idx) => {
     aoa.push([
       idx + 1,
-      a.qr_code || '',
-      [a.asset_group, a.category].filter(Boolean).join(' / '),
-      a.brand || '',
-      a.model || '',
-      a.depreciation_type === 'show' ? 'Theo show' : 'Theo tháng',
-      Number(i.deduction_value) || 0,
-      fmtDate(i.scanned_out_at),
-      i.scanned_in_at ? fmtDate(i.scanned_in_at) : 'Chưa về'
+      [g.asset_group, g.category].filter(Boolean).join(' / '),
+      g.brand,
+      g.model,
+      g.qty,
+      g.codes.join(', ')
     ]);
   });
   const totalRowIdx = aoa.length;
   const totalRow = new Array(COLS).fill('');
-  totalRow[5] = 'Tổng cộng:';
-  totalRow[6] = Number(rental.total_depreciation_value) || 0;
+  totalRow[3] = 'Tổng số lượng thiết bị:';
+  totalRow[4] = items.length;
   aoa.push(totalRow);
   aoa.push([]);
   aoa.push([]);
   const sigRowIdx = aoa.length;
   const sigRow1 = new Array(COLS).fill('');
   sigRow1[0] = 'Người giao thiết bị';
-  sigRow1[7] = 'Người nhận thiết bị';
+  sigRow1[4] = 'Người nhận thiết bị';
   aoa.push(sigRow1);
   const sigRow2 = new Array(COLS).fill('');
   sigRow2[0] = '(Ký, ghi rõ họ tên)';
-  sigRow2[7] = '(Ký, ghi rõ họ tên)';
+  sigRow2[4] = '(Ký, ghi rõ họ tên)';
   aoa.push(sigRow2);
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -330,32 +344,29 @@ async function downloadRentalXlsx(profile, rental) {
     { s: { r: 2, c: 0 }, e: { r: 2, c: COLS - 1 } },
     { s: { r: 3, c: 0 }, e: { r: 3, c: COLS - 1 } },
     { s: { r: 4, c: 0 }, e: { r: 4, c: COLS - 1 } },
-    { s: { r: sigRowIdx, c: 0 }, e: { r: sigRowIdx, c: 3 } },
-    { s: { r: sigRowIdx, c: 7 }, e: { r: sigRowIdx, c: 8 } },
-    { s: { r: sigRowIdx + 1, c: 0 }, e: { r: sigRowIdx + 1, c: 3 } },
-    { s: { r: sigRowIdx + 1, c: 7 }, e: { r: sigRowIdx + 1, c: 8 } }
+    { s: { r: sigRowIdx, c: 0 }, e: { r: sigRowIdx, c: 2 } },
+    { s: { r: sigRowIdx, c: 4 }, e: { r: sigRowIdx, c: 5 } },
+    { s: { r: sigRowIdx + 1, c: 0 }, e: { r: sigRowIdx + 1, c: 2 } },
+    { s: { r: sigRowIdx + 1, c: 4 }, e: { r: sigRowIdx + 1, c: 5 } }
   ];
-  ws['!cols'] = [{ wch: 5 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 16 }, { wch: 13 }, { wch: 15 }, { wch: 17 }, { wch: 17 }];
+  ws['!cols'] = [{ wch: 5 }, { wch: 22 }, { wch: 14 }, { wch: 18 }, { wch: 10 }, { wch: 42 }];
   ws['!rows'] = [{ hpt: 22 }, { hpt: 24 }];
 
   xlsxSetStyle(ws, 0, 0, { font: { bold: true, sz: 14 }, alignment: { horizontal: 'center' } });
   xlsxSetStyle(ws, 1, 0, { font: { bold: true, sz: 16 }, alignment: { horizontal: 'center' } });
   for (let r = 2; r <= 4; r++) xlsxSetStyle(ws, r, 0, { alignment: { horizontal: 'center' } });
   for (let c = 0; c < COLS; c++) xlsxSetStyle(ws, headerRowIdx, c, xlsxHeaderStyle());
-  for (let r = headerRowIdx + 1; r <= headerRowIdx + items.length; r++) {
+  for (let r = headerRowIdx + 1; r <= headerRowIdx + groups.length; r++) {
     for (let c = 0; c < COLS; c++) {
-      const style = { border: xlsxBorderThin(), alignment: { vertical: 'center', horizontal: c === 6 ? 'right' : (c === 0 ? 'center' : 'left') } };
-      xlsxSetStyle(ws, r, c, style);
-      if (c === 6) { const addr = XLSX.utils.encode_cell({ r, c }); ws[addr].z = '#,##0'; }
+      xlsxSetStyle(ws, r, c, { border: xlsxBorderThin(), alignment: { vertical: 'center', horizontal: c === 4 ? 'center' : (c === 0 ? 'center' : 'left'), wrapText: c === 5 } });
     }
   }
-  xlsxSetStyle(ws, totalRowIdx, 5, { font: { bold: true }, alignment: { horizontal: 'right' } });
-  xlsxSetStyle(ws, totalRowIdx, 6, { font: { bold: true }, alignment: { horizontal: 'right' } });
-  { const addr = XLSX.utils.encode_cell({ r: totalRowIdx, c: 6 }); ws[addr].z = '#,##0'; }
+  xlsxSetStyle(ws, totalRowIdx, 3, { font: { bold: true }, alignment: { horizontal: 'right' } });
+  xlsxSetStyle(ws, totalRowIdx, 4, { font: { bold: true }, alignment: { horizontal: 'center' } });
   xlsxSetStyle(ws, sigRowIdx, 0, { font: { bold: true }, alignment: { horizontal: 'center' } });
-  xlsxSetStyle(ws, sigRowIdx, 7, { font: { bold: true }, alignment: { horizontal: 'center' } });
+  xlsxSetStyle(ws, sigRowIdx, 4, { font: { bold: true }, alignment: { horizontal: 'center' } });
   xlsxSetStyle(ws, sigRowIdx + 1, 0, { font: { italic: true, sz: 10 }, alignment: { horizontal: 'center' } });
-  xlsxSetStyle(ws, sigRowIdx + 1, 7, { font: { italic: true, sz: 10 }, alignment: { horizontal: 'center' } });
+  xlsxSetStyle(ws, sigRowIdx + 1, 4, { font: { italic: true, sz: 10 }, alignment: { horizontal: 'center' } });
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Bien ban');
