@@ -33,7 +33,8 @@ const ADMIN_NAV = [
   { href: '/xuat-kho.html', label: 'Xuất kho' },
   { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
   { href: '/lich-su.html', label: 'Lịch sử' },
-  { href: '/staff.html', label: 'Nhân viên' }
+  { href: '/staff.html', label: 'Nhân viên' },
+  { href: '/choose-plan.html', label: 'Gói dịch vụ' }
 ];
 
 const OPERATOR_NAV = [
