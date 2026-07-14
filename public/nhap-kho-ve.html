@@ -131,8 +131,12 @@ async function runCamera() {
   const target = availableCameras[currentCameraIndex] ? availableCameras[currentCameraIndex].id : { facingMode: 'environment' };
   try {
     await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+    attachZoomControl(scanner);
   } catch (e) {
-    try { await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {}); }
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
     catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
   }
 }

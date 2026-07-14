@@ -69,7 +69,7 @@
     <div class="scan-list" id="itemsList"></div>
 
     <div class="flex" style="margin-top:14px">
-      <a id="exportLink" href="#" class="btn secondary">Xuất CSV</a>
+      <a id="exportLink" href="#" class="btn secondary">📊 Xuất Excel (biên bản)</a>
       <button id="closeBtn" class="danger">Đóng show (ngừng quét xuất)</button>
     </div>
   </div>
@@ -222,8 +222,7 @@ document.getElementById('closeBtn').addEventListener('click', async () => {
 
 document.getElementById('exportLink').addEventListener('click', async (e) => {
   e.preventDefault();
-  if (!isAdmin(profile)) { toast('Chỉ Quản trị mới xuất được báo cáo có giá trị', 'error'); return; }
-  await downloadRentalCsv(profile, currentRental);
+  try { await downloadRentalXlsx(profile, currentRental); } catch (err) { toast(err.message, 'error'); }
 });
 
 let availableCameras = [];
@@ -247,8 +246,12 @@ async function runCamera() {
   const target = availableCameras[currentCameraIndex] ? availableCameras[currentCameraIndex].id : { facingMode: 'environment' };
   try {
     await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+    attachZoomControl(scanner);
   } catch (e) {
-    try { await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {}); }
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
     catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
   }
 }
