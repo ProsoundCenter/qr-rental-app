@@ -1,4 +1,4 @@
-// common.js - shared helpers used by all pages
+// common.js - helpers dung chung cho moi trang (can nap sau supabaseClient.js)
 function money(n) {
   n = Number(n) || 0;
   return n.toLocaleString('vi-VN') + ' đ';
@@ -24,40 +24,54 @@ function toast(msg, type) {
   setTimeout(() => el.remove(), 3200);
 }
 
-async function api(path, opts) {
-  opts = opts || {};
-  const headers = Object.assign({}, opts.body ? { 'Content-Type': 'application/json' } : {}, opts.headers || {});
-  const res = await fetch(path, Object.assign({}, opts, { headers }));
-  let data = null;
-  const ct = res.headers.get('content-type') || '';
-  if (ct.includes('application/json')) {
-    data = await res.json().catch(() => null);
-  }
-  if (!res.ok) {
-    const msg = (data && data.error) ? data.error : ('Loi (' + res.status + ')');
-    throw new Error(msg);
-  }
-  return data;
-}
+function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
 
-const NAV_ITEMS = [
+const ADMIN_NAV = [
   { href: '/index.html', label: 'Tổng quan' },
   { href: '/nhap-kho.html', label: 'Nhập kho' },
   { href: '/tem.html', label: 'In tem QR' },
-  { href: '/xuat-kho.html', label: 'Xuất kho (Quét QR)' },
-  { href: '/lich-su.html', label: 'Lịch sử show' }
+  { href: '/xuat-kho.html', label: 'Xuất kho' },
+  { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
+  { href: '/lich-su.html', label: 'Lịch sử' },
+  { href: '/staff.html', label: 'Nhân viên' }
 ];
 
-function renderNav(activeHref) {
+const OPERATOR_NAV = [
+  { href: '/xuat-kho.html', label: 'Xuất kho' },
+  { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
+  { href: '/lich-su.html', label: 'Lịch sử' }
+];
+
+// Ve thanh dieu huong tuy theo vai tro. profile lay tu requireLogin() o dau trang.
+function renderNav(activeHref, profile) {
   const container = document.getElementById('nav-container');
   if (!container) return;
-  const links = NAV_ITEMS.map(item =>
+  const items = isAdmin(profile) ? ADMIN_NAV : OPERATOR_NAV;
+  const links = items.map(item =>
     `<a href="${item.href}" class="${item.href === activeHref ? 'active' : ''}">${item.label}</a>`
   ).join('');
+  const companyName = profile && profile.companies ? esc(profile.companies.name) : '';
+  const roleLabel = isAdmin(profile) ? 'Quản trị' : 'Thao tác viên';
   container.innerHTML = `
     <header class="topbar">
-      <div class="brand">📦 QR Rental Manager</div>
+      <div class="brand">📦 QR Rental Manager${companyName ? ' — ' + companyName : ''}</div>
       <nav class="tabs">${links}</nav>
+      <div class="flex" style="gap:8px">
+        <span class="role-badge">${roleLabel}</span>
+        <button class="secondary" id="logoutBtn" style="padding:6px 12px;font-size:13px">Đăng xuất</button>
+      </div>
     </header>
   `;
+  const btn = document.getElementById('logoutBtn');
+  if (btn) btn.addEventListener('click', logout);
+}
+
+// Chan operator truy cap thang cac trang chi danh cho Admin (nhap-kho, tem, staff...).
+// Goi ngay sau requireLogin() o dau moi trang chi-danh-cho-Admin.
+function requireAdmin(profile) {
+  if (!isAdmin(profile)) {
+    location.href = '/xuat-kho.html';
+    return false;
+  }
+  return true;
 }
