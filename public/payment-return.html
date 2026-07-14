@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kết quả thanh toán</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<main class="narrow">
+  <div class="card center">
+    <h1 id="title">Đang xử lý thanh toán...</h1>
+    <p class="muted" id="msg">Vui lòng chờ trong giây lát, hệ thống đang xác nhận với VNPay.</p>
+    <div id="spinner" style="font-size:32px;margin:16px 0">⏳</div>
+    <a href="/index.html" class="btn" id="toDash" style="display:none">Về ứng dụng</a>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+// Luu y: day chi la man hinh hien thi UX ngay sau khi VNPay redirect trinh duyet ve.
+// Trang thai CHINH THUC va an toan duoc Edge Function 'vnpay-webhook' xac nhan
+// qua kenh IPN server-to-server (khong phu thuoc vao query string tren URL nay,
+// vi query string co the bi nguoi dung sua tay).
+const params = new URLSearchParams(location.search);
+const responseCode = params.get('vnp_ResponseCode');
+const txnRef = params.get('vnp_TxnRef');
+
+async function poll() {
+  for (let i = 0; i < 10; i++) {
+    if (txnRef) {
+      const { data } = await sb.from('payments').select('status').eq('gateway_txn_ref', txnRef).single();
+      if (data && data.status === 'success') return showResult(true);
+      if (data && data.status === 'failed') return showResult(false);
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  showResult(responseCode === '00', true);
+}
+
+function showResult(success, uncertain) {
+  document.getElementById('spinner').textContent = success ? '✅' : '❌';
+  document.getElementById('title').textContent = success
+    ? 'Thanh toán thành công!'
+    : (uncertain ? 'Chưa xác nhận được thanh toán' : 'Thanh toán thất bại');
+  document.getElementById('msg').textContent = success
+    ? 'Gói dịch vụ của bạn đã được kích hoạt.'
+    : 'Nếu bạn đã bị trừ tiền mà thấy thông báo này, vui lòng liên hệ hỗ trợ kèm mã: ' + (txnRef || '—');
+  document.getElementById('toDash').style.display = '';
+}
+
+requireLogin().then(p => { if (p) poll(); });
+</script>
+</body>
+</html>

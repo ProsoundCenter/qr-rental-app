@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đăng ký công ty mới</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<main class="narrow">
+  <div class="card">
+    <h1>Đăng ký tài khoản công ty</h1>
+    <p class="muted" style="margin-top:-6px">Tạo công ty của bạn, sau đó chọn gói và thanh toán để kích hoạt.</p>
+    <form id="form">
+      <div style="margin-bottom:12px">
+        <label>Tên công ty *</label>
+        <input name="companyName" required>
+      </div>
+      <div style="margin-bottom:12px">
+        <label>Số điện thoại</label>
+        <input name="phone">
+      </div>
+      <div style="margin-bottom:12px">
+        <label>Tên đăng nhập (username) *</label>
+        <input name="username" required autocomplete="username" placeholder="vd: cty_abc">
+      </div>
+      <div style="margin-bottom:12px">
+        <label>Mật khẩu *</label>
+        <input type="password" name="password" required minlength="6" autocomplete="new-password">
+      </div>
+      <button type="submit" class="block">Đăng ký</button>
+    </form>
+    <p class="center muted" style="margin-top:14px">Đã có tài khoản? <a href="/login.html">Đăng nhập</a></p>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const res = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/signup-company', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + window.APP_CONFIG.SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Đăng ký thất bại');
+
+    // Dang nhap ngay sau khi tao xong
+    const { error: signInErr } = await sb.auth.signInWithPassword({
+      email: usernameToEmail(body.username),
+      password: body.password
+    });
+    if (signInErr) throw signInErr;
+
+    toast('Đăng ký thành công!', 'success');
+    setTimeout(() => location.href = '/choose-plan.html', 600);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

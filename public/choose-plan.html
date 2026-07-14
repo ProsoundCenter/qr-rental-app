@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chọn gói</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🏢 Chọn gói dịch vụ</div>
+  <div class="flex">
+    <a href="/index.html" class="btn secondary">← Về ứng dụng</a>
+    <button class="secondary" onclick="logout()">Đăng xuất</button>
+  </div>
+</header>
+<main>
+  <div class="card">
+    <h1>Chọn gói phù hợp</h1>
+    <div class="grid" id="plans"></div>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+let selectedPlanId = null;
+
+async function init() {
+  const profile = await requireLogin();
+  if (!profile) return;
+  const { data: plans, error } = await sb.from('plans').select('*').eq('active', true).order('price');
+  if (error) { toast(error.message, 'error'); return; }
+  document.getElementById('plans').innerHTML = plans.map(p => `
+    <div class="plan-card" data-id="${p.id}">
+      <h3>${esc(p.name)}</h3>
+      <div class="price">${money(p.price)}</div>
+      <div class="muted" style="font-size:12.5px">/ ${p.duration_days} ngày</div>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">Tối đa ${p.max_users} người dùng</div>
+      <button style="margin-top:12px" class="block pay-btn">Chọn &amp; Thanh toán</button>
+    </div>
+  `).join('');
+  document.querySelectorAll('.pay-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const card = e.target.closest('.plan-card');
+      pay(card.dataset.id, btn);
+    });
+  });
+}
+
+async function pay(planId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Đang tạo link thanh toán...';
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/create-payment', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ planId, returnUrl: location.origin + '/payment-return.html' })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Không tạo được thanh toán');
+    location.href = data.paymentUrl;
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Chọn & Thanh toán';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

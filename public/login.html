@@ -24,6 +24,7 @@
       <button type="submit" style="width:100%">Đăng nhập</button>
     </form>
     <p class="center muted" style="font-size:12.5px;margin-top:14px">Tài khoản do quản trị công ty của bạn cấp.</p>
+    <p class="center muted" style="margin-top:10px">Chưa có tài khoản? <a href="/signup.html">Đăng ký công ty mới</a></p>
   </div>
 </main>
 
@@ -31,6 +32,11 @@
 <script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
 <script>
+function landingPageFor(profile) {
+  if (profile && profile.role === 'superadmin') return '/admin/index.html';
+  return isAdmin(profile) ? '/index.html' : '/xuat-kho.html';
+}
+
 document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -41,7 +47,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const { error } = await sb.auth.signInWithPassword({ email: usernameToEmail(username), password });
     if (error) throw error;
     const profile = await getSessionProfile();
-    location.href = isAdmin(profile) ? '/index.html' : '/xuat-kho.html';
+    location.href = landingPageFor(profile);
   } catch (err) {
     toast('Sai tên đăng nhập hoặc mật khẩu', 'error');
     btn.disabled = false;
@@ -51,7 +57,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 sb.auth.getSession().then(async ({ data }) => {
   if (!data.session) return;
   const profile = await getSessionProfile();
-  location.href = isAdmin(profile) ? '/index.html' : '/xuat-kho.html';
+  location.href = landingPageFor(profile);
 });
 </script>
 </body>
