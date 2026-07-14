@@ -82,6 +82,7 @@ main {
   margin: 0 auto;
   padding: 18px;
 }
+main.narrow { max-width: 420px; padding-top: 60px; }
 
 .card {
   background: var(--card);
@@ -162,6 +163,7 @@ button.secondary, .btn.secondary { background: #fff; color: var(--primary); bord
 button.danger, .btn.danger { background: var(--danger); }
 button.success, .btn.success { background: var(--success); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.block, .btn.block { width: 100%; }
 
 table {
   width: 100%;
@@ -189,6 +191,10 @@ tr:hover td { background: #f9fafb; }
 .badge.rented { background: #fef3c7; color: #92400e; }
 .badge.active { background: #dbeafe; color: #1e40af; }
 .badge.closed, .badge.returned { background: #e5e7eb; color: #374151; }
+.badge.pending { background: #fef3c7; color: #92400e; }
+.badge.expired, .badge.cancelled, .badge.suspended { background: #fee2e2; color: #991b1b; }
+.badge.success { background: #dcfce7; color: #166534; }
+.badge.failed { background: #fee2e2; color: #991b1b; }
 
 .muted { color: var(--muted); }
 .mono { font-family: "SF Mono", Consolas, monospace; }
@@ -274,6 +280,10 @@ tr:hover td { background: #f9fafb; }
 .scan-list-row:last-child { border-bottom: none; }
 
 .empty-state { text-align: center; padding: 30px; color: var(--muted); }
+
+.plan-card { border: 2px solid var(--border); border-radius: var(--radius); padding: 18px; text-align: center; cursor: pointer; transition: border-color .15s; }
+.plan-card:hover, .plan-card.selected { border-color: var(--primary); }
+.plan-card .price { font-size: 24px; font-weight: 700; color: var(--primary-dark); margin: 8px 0; }
 
 a { color: var(--primary); }
 
