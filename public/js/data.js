@@ -233,6 +233,26 @@ async function scanReturn(profile, code) {
   return { asset, rental: openItem.rentals, rentalReturned };
 }
 
+// Xoa 1 dong rental_items (thiet bi quet nham), hoan tra khau hao + trang thai asset,
+// va tinh lai tong khau hao cua rental cho dung (tranh so tien "treo" sau khi xoa).
+async function removeRentalItem(rentalId, item) {
+  const { error: delErr } = await sb.from('rental_items').delete().eq('id', item.id);
+  if (delErr) throw delErr;
+
+  const asset = await getAsset(item.asset_id);
+  const { error: assetErr } = await sb.from('assets').update({
+    rental_count: Math.max(0, (asset.rental_count || 0) - 1),
+    total_depreciated: round2(Math.max(0, Number(asset.total_depreciated || 0) - Number(item.deduction_value))),
+    status: 'available'
+  }).eq('id', item.asset_id);
+  if (assetErr) throw assetErr;
+
+  const { data: items } = await sb.from('rental_items').select('deduction_value').eq('rental_id', rentalId);
+  const totalDep = round2((items || []).reduce((s, i) => s + Number(i.deduction_value), 0));
+  const { error: rentalErr } = await sb.from('rentals').update({ total_depreciation_value: totalDep }).eq('id', rentalId);
+  if (rentalErr) throw rentalErr;
+}
+
 function csvEscape(v) {
   const s = (v === undefined || v === null) ? '' : String(v);
   if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
