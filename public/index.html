@@ -6,6 +6,7 @@
 <title>Tổng quan - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
 <div id="nav-container"></div>
@@ -13,6 +14,20 @@
   <h1>Tổng quan kho thiết bị cho thuê</h1>
 
   <div class="grid" id="stats"></div>
+
+  <div class="card">
+    <h2>Nhập / Xuất dữ liệu Excel</h2>
+    <p class="muted">Xuất toàn bộ kho ra file Excel để lưu trữ/đối chiếu, hoặc nhập hàng loạt thiết bị mới từ file Excel (dùng file mẫu bên dưới).</p>
+    <div class="flex" style="flex-wrap:wrap">
+      <button type="button" class="secondary" id="btnTemplate">⬇️ Tải file mẫu Excel</button>
+      <button type="button" class="secondary" id="btnExportAssets">📊 Xuất danh sách ra Excel</button>
+      <label class="btn secondary" style="cursor:pointer">
+        ⬆️ Nhập từ Excel
+        <input type="file" id="importFile" accept=".xlsx,.xls" style="display:none">
+      </label>
+    </div>
+    <div id="importResult" style="margin-top:10px"></div>
+  </div>
 
   <div class="card">
     <div class="flex between">
@@ -44,14 +59,41 @@
 <script src="/js/data.js"></script>
 <script>
 let ALL = [];
+let PROFILE = null;
 
 async function init() {
-  const profile = await requireLogin();
-  if (!profile) return;
-  if (!requireAdmin(profile)) return;
-  renderNav('/index.html', profile);
+  PROFILE = await requireLogin();
+  if (!PROFILE) return;
+  if (!requireAdmin(PROFILE)) return;
+  renderNav('/index.html', PROFILE);
   await load();
 }
+
+document.getElementById('btnTemplate').addEventListener('click', () => downloadAssetsTemplateXlsx());
+document.getElementById('btnExportAssets').addEventListener('click', async () => {
+  try { await downloadAssetsXlsx(PROFILE); } catch (e) { toast(e.message, 'error'); }
+});
+document.getElementById('importFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const resultEl = document.getElementById('importResult');
+  resultEl.innerHTML = '<span class="muted">Đang nhập dữ liệu...</span>';
+  try {
+    const r = await importAssetsFromXlsxFile(PROFILE, file);
+    let html = `<div class="badge active" style="display:inline-block">Đã tạo mới: ${r.created} · Đã cập nhật: ${r.updated} · Bỏ qua: ${r.skipped}</div>`;
+    if (r.errors.length) {
+      html += '<ul style="margin-top:8px;color:var(--danger,#c0392b);font-size:13px">' + r.errors.slice(0, 20).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>';
+    }
+    resultEl.innerHTML = html;
+    toast(`Nhập xong: ${r.created} mới, ${r.updated} cập nhật`, 'success');
+    await load();
+  } catch (err) {
+    resultEl.innerHTML = '';
+    toast(err.message, 'error');
+  } finally {
+    e.target.value = '';
+  }
+});
 
 async function load() {
   ALL = await listAssets();

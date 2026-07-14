@@ -6,6 +6,7 @@
 <title>Lịch sử show - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
 </head>
 <body>
 <div id="nav-container"></div>
@@ -32,7 +33,7 @@
     <div class="flex between">
       <h2 id="detailTitle"></h2>
       <div class="flex">
-        <a id="exportLink" href="#" class="btn secondary">Xuất CSV</a>
+        <a id="exportLink" href="#" class="btn secondary">📊 Xuất Excel (biên bản)</a>
         <button class="secondary" id="closeDetail">Đóng</button>
       </div>
     </div>
@@ -104,7 +105,7 @@ async function viewDetail(id) {
   document.getElementById('detailTotalWrap').style.display = isAdmin(profile) ? '' : 'none';
   document.getElementById('detailTotal').textContent = money(r.total_depreciation_value);
   document.getElementById('exportLink').style.display = isAdmin(profile) ? '' : 'none';
-  document.getElementById('exportLink').onclick = async (e) => { e.preventDefault(); await downloadRentalCsv(profile, r); };
+  document.getElementById('exportLink').onclick = async (e) => { e.preventDefault(); await downloadRentalXlsx(profile, r); };
   document.getElementById('detailCard').scrollIntoView({ behavior: 'smooth' });
 }
 
