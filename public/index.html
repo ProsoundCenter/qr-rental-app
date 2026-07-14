@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tổng quan - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 <div id="nav-container"></div>
@@ -37,21 +38,31 @@
   </div>
 </main>
 
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
 <script>
-renderNav('/index.html');
 let ALL = [];
 
+async function init() {
+  const profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  renderNav('/index.html', profile);
+  await load();
+}
+
 async function load() {
-  ALL = await api('/api/assets');
+  ALL = await listAssets();
   renderStats();
   renderTable(ALL);
 }
 
 function renderStats() {
-  const totalImport = ALL.reduce((s, a) => s + Number(a.importValue || 0), 0);
-  const totalRemaining = ALL.reduce((s, a) => s + Number(a.remainingValue || 0), 0);
-  const totalDep = ALL.reduce((s, a) => s + Number(a.totalDepreciated || 0), 0);
+  const totalImport = ALL.reduce((s, a) => s + Number(a.import_value || 0), 0);
+  const totalDep = ALL.reduce((s, a) => s + Number(a.total_depreciated || 0), 0);
+  const totalRemaining = totalImport - totalDep;
   const rented = ALL.filter(a => a.status === 'rented').length;
   document.getElementById('stats').innerHTML = `
     <div class="stat"><div class="num">${ALL.length}</div><div class="label">Tổng số tài sản</div></div>
@@ -65,36 +76,40 @@ function renderStats() {
 function renderTable(list) {
   const tbody = document.getElementById('tbody');
   document.getElementById('empty').style.display = list.length ? 'none' : 'block';
-  tbody.innerHTML = list.map(a => `
+  tbody.innerHTML = list.map(a => {
+    const unit = unitDepreciation(a.import_value, a.depreciation_period);
+    const remaining = Number(a.import_value) - Number(a.total_depreciated || 0);
+    return `
     <tr>
-      <td class="mono">${esc(a.qrCode)}</td>
-      <td>${esc(a.group)}</td>
+      <td class="mono">${esc(a.qr_code)}</td>
+      <td>${esc(a.asset_group)}</td>
       <td>${esc(a.category)}</td>
       <td>${esc(a.brand)}</td>
       <td>${esc(a.model)}</td>
-      <td class="right">${money(a.importValue)}</td>
-      <td class="right">${money(a.depreciationUnitValue)}/${a.depreciationType === 'show' ? 'show' : 'tháng'}</td>
-      <td class="center">${a.rentalCount || 0}</td>
-      <td class="right">${money(a.remainingValue)}</td>
+      <td class="right">${money(a.import_value)}</td>
+      <td class="right">${money(unit)}/${a.depreciation_type === 'show' ? 'show' : 'tháng'}</td>
+      <td class="center">${a.rental_count || 0}</td>
+      <td class="right">${money(remaining)}</td>
       <td><span class="badge ${a.status}">${a.status === 'rented' ? 'Đang thuê' : 'Sẵn sàng'}</span></td>
       <td><a href="/nhap-kho.html?id=${a.id}" class="btn secondary" style="padding:5px 10px;font-size:12.5px">Sửa</a></td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 document.getElementById('search').addEventListener('input', (e) => {
   const q = e.target.value.trim().toLowerCase();
   if (!q) return renderTable(ALL);
   renderTable(ALL.filter(a =>
-    (a.qrCode || '').toLowerCase().includes(q) ||
+    (a.qr_code || '').toLowerCase().includes(q) ||
     (a.model || '').toLowerCase().includes(q) ||
     (a.brand || '').toLowerCase().includes(q) ||
-    (a.group || '').toLowerCase().includes(q) ||
+    (a.asset_group || '').toLowerCase().includes(q) ||
     (a.category || '').toLowerCase().includes(q)
   ));
 });
 
-load().catch(e => toast(e.message, 'error'));
+init().catch(e => toast(e.message, 'error'));
 </script>
 </body>
 </html>

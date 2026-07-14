@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nhập kho - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 </head>
 <body>
@@ -20,7 +21,7 @@
     <div class="row">
       <div>
         <label>Nhóm sản phẩm / thiết bị *</label>
-        <input name="group" required placeholder="VD: Âm thanh, Ánh sáng, Sân khấu...">
+        <input name="asset_group" required placeholder="VD: Âm thanh, Ánh sáng, Sân khấu...">
       </div>
       <div>
         <label>Chủng loại</label>
@@ -46,11 +47,11 @@
     <div class="row">
       <div>
         <label>Ngày sản xuất</label>
-        <input type="date" name="manufactureDate">
+        <input type="date" name="manufacture_date">
       </div>
       <div>
         <label>Ngày nhập kho</label>
-        <input type="date" name="importDate">
+        <input type="date" name="import_date">
       </div>
     </div>
 
@@ -58,18 +59,18 @@
     <div class="row">
       <div>
         <label>Giá trị nhập (đ) *</label>
-        <input type="number" name="importValue" min="0" step="1000" required>
+        <input type="number" name="import_value" min="0" step="1000" required>
       </div>
       <div>
         <label>Kiểu khấu hao *</label>
-        <select name="depreciationType">
+        <select name="depreciation_type">
           <option value="month">Theo tháng (khấu hao theo thời gian sử dụng)</option>
           <option value="show">Theo show (khấu hao theo số lần cho thuê)</option>
         </select>
       </div>
       <div>
         <label id="periodLabel">Số tháng dự kiến khấu hao *</label>
-        <input type="number" name="depreciationPeriod" min="1" step="1" required>
+        <input type="number" name="depreciation_period" min="1" step="1" required>
       </div>
       <div>
         <label>Đơn giá khấu hao danh định (tự tính)</label>
@@ -99,7 +100,7 @@
     <div class="row">
       <div>
         <label>Mã ngắn dán lên QR (để trống sẽ tự sinh mã)</label>
-        <input name="qrCode" id="qrCodeInput" placeholder="VD: TS-00001" class="mono">
+        <input name="qr_code" id="qrCodeInput" placeholder="VD: TS-00001" class="mono">
       </div>
       <div>
         <label>Xem trước QR</label>
@@ -118,17 +119,18 @@
   </form>
 </main>
 
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
 <script>
-renderNav('/nhap-kho.html');
-
+let profile = null;
 const params = new URLSearchParams(location.search);
 const assetId = params.get('id');
 const form = document.getElementById('form');
-let qr = null;
 
 function updatePeriodLabel() {
-  const type = form.depreciationType.value;
+  const type = form.depreciation_type.value;
   document.getElementById('periodLabel').textContent = type === 'show'
     ? 'Số show dự kiến khấu hao *'
     : 'Số tháng dự kiến khấu hao *';
@@ -136,15 +138,15 @@ function updatePeriodLabel() {
 }
 
 function updateUnitPreview() {
-  const val = Number(form.importValue.value) || 0;
-  const period = Number(form.depreciationPeriod.value) || 0;
-  const unit = period > 0 ? Math.round((val / period) * 100) / 100 : 0;
-  const type = form.depreciationType.value === 'show' ? '/show' : '/tháng';
+  const val = Number(form.import_value.value) || 0;
+  const period = Number(form.depreciation_period.value) || 0;
+  const unit = unitDepreciation(val, period);
+  const type = form.depreciation_type.value === 'show' ? '/show' : '/tháng';
   document.getElementById('unitPreview').value = money(unit) + type;
 }
 
 function updateQrPreview() {
-  const text = form.qrCode.value;
+  const text = form.qr_code.value;
   const box = document.getElementById('qrPreview');
   const val = (text && text.trim()) || (assetId ? '(giữ nguyên mã hiện tại)' : '(mã sẽ tự sinh khi lưu)');
   document.getElementById('qrPreviewText').textContent = val;
@@ -155,9 +157,9 @@ function updateQrPreview() {
   } catch (e) { /* library may not load offline */ }
 }
 
-form.importValue.addEventListener('input', updateUnitPreview);
-form.depreciationPeriod.addEventListener('input', updateUnitPreview);
-form.depreciationType.addEventListener('change', updatePeriodLabel);
+form.import_value.addEventListener('input', updateUnitPreview);
+form.depreciation_period.addEventListener('input', updateUnitPreview);
+form.depreciation_type.addEventListener('change', updatePeriodLabel);
 document.getElementById('qrCodeInput').addEventListener('input', updateQrPreview);
 
 async function loadExisting() {
@@ -165,21 +167,21 @@ async function loadExisting() {
   document.getElementById('pageTitle').textContent = 'Sửa tài sản / thiết bị';
   document.getElementById('editOnlyStats').style.display = '';
   document.getElementById('deleteBtn').style.display = '';
-  const a = await api('/api/assets/' + assetId);
-  form.group.value = a.group || '';
+  const a = await getAsset(assetId);
+  form.asset_group.value = a.asset_group || '';
   form.category.value = a.category || '';
   form.brand.value = a.brand || '';
   form.model.value = a.model || '';
   form.description.value = a.description || '';
-  form.manufactureDate.value = a.manufactureDate || '';
-  form.importDate.value = a.importDate || '';
-  form.importValue.value = a.importValue || 0;
-  form.depreciationType.value = a.depreciationType || 'month';
-  form.depreciationPeriod.value = a.depreciationPeriod || '';
-  form.qrCode.value = a.qrCode || '';
+  form.manufacture_date.value = a.manufacture_date || '';
+  form.import_date.value = a.import_date || '';
+  form.import_value.value = a.import_value || 0;
+  form.depreciation_type.value = a.depreciation_type || 'month';
+  form.depreciation_period.value = a.depreciation_period || '';
+  form.qr_code.value = a.qr_code || '';
   if (form.status) form.status.value = a.status || 'available';
-  document.getElementById('rentalCountView').value = a.rentalCount || 0;
-  document.getElementById('remainingView').value = money(a.remainingValue);
+  document.getElementById('rentalCountView').value = a.rental_count || 0;
+  document.getElementById('remainingView').value = money(Number(a.import_value) - Number(a.total_depreciated || 0));
   document.getElementById('printLink').style.display = '';
   document.getElementById('printLink').href = '/tem.html?id=' + a.id;
   updatePeriodLabel();
@@ -193,11 +195,11 @@ form.addEventListener('submit', async (e) => {
   try {
     let saved;
     if (assetId) {
-      saved = await api('/api/assets/' + assetId, { method: 'PUT', body: JSON.stringify(body) });
+      saved = await updateAsset(assetId, body);
       toast('Đã cập nhật tài sản', 'success');
     } else {
-      saved = await api('/api/assets', { method: 'POST', body: JSON.stringify(body) });
-      toast('Đã nhập kho thành công. Mã QR: ' + saved.qrCode, 'success');
+      saved = await createAsset(profile, body);
+      toast('Đã nhập kho thành công. Mã QR: ' + saved.qr_code, 'success');
     }
     setTimeout(() => location.href = '/tem.html?id=' + saved.id, 700);
   } catch (err) {
@@ -207,12 +209,20 @@ form.addEventListener('submit', async (e) => {
 
 document.getElementById('deleteBtn').addEventListener('click', async () => {
   if (!confirm('Xoá tài sản này khỏi kho? Hành động không thể hoàn tác.')) return;
-  await api('/api/assets/' + assetId, { method: 'DELETE' });
+  await deleteAsset(assetId);
   toast('Đã xoá', 'success');
   setTimeout(() => location.href = '/index.html', 500);
 });
 
-loadExisting().catch(e => toast(e.message, 'error'));
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  renderNav('/nhap-kho.html', profile);
+  await loadExisting();
+}
+
+init().catch(e => toast(e.message, 'error'));
 </script>
 </body>
 </html>

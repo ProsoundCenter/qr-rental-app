@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhập kho về - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <div class="flex between">
+    <h1>Nhập kho về — Quét thiết bị trả về</h1>
+    <a href="/lich-su.html" class="btn secondary">Xem lịch sử show &rarr;</a>
+  </div>
+  <p class="muted">Quét liên tục từng thiết bị khi thu về sau show — không cần chọn show trước, hệ thống tự nhận diện thiết bị thuộc show nào và tự đóng show khi đã thu đủ.</p>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="flex between">
+          <h3>Quét bằng camera</h3>
+          <button type="button" class="secondary" id="switchCamBtn" style="display:none;padding:5px 10px;font-size:12.5px">🔄 Đổi camera</button>
+        </div>
+        <div id="reader"></div>
+      </div>
+      <div>
+        <h3>Hoặc nhập / quét bằng máy quét mã vạch (bàn phím)</h3>
+        <form id="manualForm">
+          <input id="manualCode" class="scan-input" placeholder="Quét hoặc gõ mã QR rồi Enter" autocomplete="off" autofocus>
+        </form>
+        <div id="flash" class="scan-flash" style="margin-top:10px">Sẵn sàng quét...</div>
+        <div class="scan-count" id="scanCount" style="margin-top:10px">0</div>
+        <div class="muted">thiết bị đã nhập kho về (phiên này)</div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:16px">Vừa quét về (mới nhất trên đầu)</h3>
+    <div class="scan-list" id="itemsList"></div>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
+<script>
+let profile = null;
+let sessionItems = [];
+let scanner = null;
+let lastScan = { code: null, time: 0 };
+let busy = false;
+
+function flash(msg, ok) {
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.className = 'scan-flash ' + (ok ? 'ok' : 'err');
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = 'Sẵn sàng quét...'; el.className = 'scan-flash'; }, 1400);
+}
+
+function renderList() {
+  document.getElementById('scanCount').textContent = sessionItems.length;
+  document.getElementById('itemsList').innerHTML = sessionItems.map(i => `
+    <div class="scan-list-row">
+      <div>
+        <span class="mono">${esc(i.qrCode)}</span> — ${esc(i.brand)} ${esc(i.model)}
+        <div class="muted" style="font-size:12px">${esc(i.rentalLabel)}</div>
+      </div>
+      <div>${i.rentalReturned ? '<span class="badge returned">Show đã trả hết</span>' : '<span class="badge available">OK</span>'}</div>
+    </div>
+  `).join('') || '<div class="empty-state">Chưa quét thiết bị nào trong phiên này</div>';
+}
+
+async function addCode(code) {
+  code = (code || '').trim();
+  if (!code || busy) return;
+  const now = Date.now();
+  if (lastScan.code === code && now - lastScan.time < 2500) return;
+  lastScan = { code, time: now };
+  busy = true;
+  try {
+    const result = await scanReturn(profile, code);
+    const a = result.asset;
+    sessionItems.unshift({
+      qrCode: a.qr_code,
+      brand: a.brand,
+      model: a.model,
+      rentalLabel: result.rental ? (result.rental.code + ' — ' + result.rental.show_name) : '',
+      rentalReturned: result.rentalReturned
+    });
+    renderList();
+    flash('✓ Đã nhận về: ' + a.qr_code, true);
+    if (navigator.vibrate) navigator.vibrate(70);
+  } catch (err) {
+    flash('✗ ' + err.message, false);
+    if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  } finally {
+    busy = false;
+  }
+}
+
+document.getElementById('manualForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('manualCode');
+  addCode(input.value);
+  input.value = '';
+  input.focus();
+});
+
+let availableCameras = [];
+let currentCameraIndex = 0;
+
+async function startScanner() {
+  if (typeof Html5Qrcode === 'undefined') {
+    document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera. Dùng ô nhập mã bên cạnh.</p>';
+    return;
+  }
+  scanner = new Html5Qrcode('reader');
+  try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
+  const backIdx = availableCameras.findIndex(c => /back|rear|environment|sau/i.test(c.label || ''));
+  currentCameraIndex = backIdx >= 0 ? backIdx : availableCameras.length - 1;
+  if (currentCameraIndex < 0) currentCameraIndex = 0;
+  document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
+  await runCamera();
+}
+
+async function runCamera() {
+  const target = availableCameras[currentCameraIndex] ? availableCameras[currentCameraIndex].id : { facingMode: 'environment' };
+  try {
+    await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+  } catch (e) {
+    try { await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {}); }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
+  }
+}
+
+document.getElementById('switchCamBtn').addEventListener('click', async () => {
+  if (!scanner || availableCameras.length < 2) return;
+  try { await scanner.stop(); } catch (e) {}
+  currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
+  await runCamera();
+});
+
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  renderNav('/nhap-kho-ve.html', profile);
+  renderList();
+  startScanner();
+  document.getElementById('manualCode').focus();
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>

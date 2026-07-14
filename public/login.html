@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đăng nhập - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<main class="narrow" style="max-width:420px;margin:60px auto;padding:0 16px">
+  <div class="card">
+    <h1>📦 Đăng nhập</h1>
+    <p class="muted" style="margin-top:-6px">QR Rental Manager</p>
+    <form id="form">
+      <div style="margin-bottom:12px">
+        <label>Tên đăng nhập</label>
+        <input name="username" required autocomplete="username" autofocus>
+      </div>
+      <div style="margin-bottom:12px">
+        <label>Mật khẩu</label>
+        <input type="password" name="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" style="width:100%">Đăng nhập</button>
+    </form>
+    <p class="center muted" style="font-size:12.5px;margin-top:14px">Tài khoản do quản trị công ty của bạn cấp.</p>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const { username, password } = Object.fromEntries(fd.entries());
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email: usernameToEmail(username), password });
+    if (error) throw error;
+    const profile = await getSessionProfile();
+    location.href = isAdmin(profile) ? '/index.html' : '/xuat-kho.html';
+  } catch (err) {
+    toast('Sai tên đăng nhập hoặc mật khẩu', 'error');
+    btn.disabled = false;
+  }
+});
+
+sb.auth.getSession().then(async ({ data }) => {
+  if (!data.session) return;
+  const profile = await getSessionProfile();
+  location.href = isAdmin(profile) ? '/index.html' : '/xuat-kho.html';
+});
+</script>
+</body>
+</html>

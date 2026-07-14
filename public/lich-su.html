@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lịch sử show - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 <div id="nav-container"></div>
@@ -19,7 +20,7 @@
       <table>
         <thead>
           <tr><th>Mã show</th><th>Tên show</th><th>Khách hàng</th><th>Địa điểm</th><th>Thời gian</th>
-          <th class="center">Số thiết bị</th><th class="right">Tổng khấu hao</th><th>Trạng thái</th><th></th></tr>
+          <th class="center">Số thiết bị</th><th class="right" id="depHeader">Tổng khấu hao</th><th>Trạng thái</th><th></th></tr>
         </thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -38,30 +39,34 @@
     <p class="muted" id="detailMeta"></p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right">Khấu hao trừ</th><th>Thời điểm quét</th></tr></thead>
+        <thead><tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr></thead>
         <tbody id="detailBody"></tbody>
       </table>
     </div>
-    <div class="right" style="margin-top:8px"><strong>Tổng: </strong><span id="detailTotal"></span></div>
+    <div class="right" style="margin-top:8px" id="detailTotalWrap"><strong>Tổng: </strong><span id="detailTotal"></span></div>
   </div>
 </main>
 
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
 <script>
-renderNav('/lich-su.html');
+let profile = null;
 
 async function load() {
-  const rentals = await api('/api/rentals');
+  const rentals = await listRentals();
   document.getElementById('empty').style.display = rentals.length ? 'none' : 'block';
+  document.getElementById('depHeader').style.display = isAdmin(profile) ? '' : 'none';
   document.getElementById('tbody').innerHTML = rentals.map(r => `
     <tr>
       <td class="mono">${esc(r.code)}</td>
-      <td>${esc(r.showName)}</td>
+      <td>${esc(r.show_name)}</td>
       <td>${esc(r.customer || '—')}</td>
       <td>${esc(r.location || '—')}</td>
-      <td style="font-size:12.5px">${fmtDate(r.startDateTime)}<br>→ ${fmtDate(r.endDateTime)}</td>
-      <td class="center">${r.items.length}</td>
-      <td class="right">${money(r.totalDepreciationValue)}</td>
+      <td style="font-size:12.5px">${fmtDate(r.start_datetime)}<br>→ ${fmtDate(r.end_datetime)}</td>
+      <td class="center">—</td>
+      ${isAdmin(profile) ? `<td class="right">${money(r.total_depreciation_value)}</td>` : ''}
       <td><span class="badge ${r.status}">${statusLabel(r.status)}</span></td>
       <td><button class="secondary" data-view="${r.id}">Xem</button></td>
     </tr>
@@ -76,23 +81,30 @@ function statusLabel(s) {
 }
 
 async function viewDetail(id) {
-  const r = await api('/api/rentals/' + id);
+  const r = await getRental(id);
+  const items = await getRentalItems(id);
   document.getElementById('detailCard').style.display = '';
-  document.getElementById('detailTitle').textContent = r.code + ' — ' + r.showName;
+  document.getElementById('detailTitle').textContent = r.code + ' — ' + r.show_name;
   document.getElementById('detailMeta').textContent =
-    `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.startDateTime)} → ${fmtDate(r.endDateTime)} · Trạng thái: ${statusLabel(r.status)}`;
-  document.getElementById('detailBody').innerHTML = r.items.map(i => `
+    `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.start_datetime)} → ${fmtDate(r.end_datetime)} · Trạng thái: ${statusLabel(r.status)}`;
+  document.getElementById('detailDepHeader').style.display = isAdmin(profile) ? '' : 'none';
+  document.getElementById('detailBody').innerHTML = items.map(i => {
+    const a = i.assets || {};
+    return `
     <tr>
-      <td class="mono">${esc(i.qrCode)}</td>
-      <td>${esc(i.group)} / ${esc(i.category)}</td>
-      <td>${esc(i.brand)} ${esc(i.model)}</td>
-      <td>${i.depreciationType === 'show' ? 'Theo show' : 'Theo tháng'}</td>
-      <td class="right">${money(i.deductionValue)}</td>
-      <td>${fmtDate(i.scannedAt)}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="6" class="muted center">Chưa có thiết bị</td></tr>';
-  document.getElementById('detailTotal').textContent = money(r.totalDepreciationValue);
-  document.getElementById('exportLink').href = '/api/rentals/' + r.id + '/export.csv';
+      <td class="mono">${esc(a.qr_code)}</td>
+      <td>${esc(a.asset_group)} / ${esc(a.category)}</td>
+      <td>${esc(a.brand)} ${esc(a.model)}</td>
+      <td>${a.depreciation_type === 'show' ? 'Theo show' : 'Theo tháng'}</td>
+      ${isAdmin(profile) ? `<td class="right">${money(i.deduction_value)}</td>` : ''}
+      <td>${fmtDate(i.scanned_out_at)}</td>
+      <td>${i.scanned_in_at ? fmtDate(i.scanned_in_at) : '<span class="muted">Chưa về</span>'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="muted center">Chưa có thiết bị</td></tr>';
+  document.getElementById('detailTotalWrap').style.display = isAdmin(profile) ? '' : 'none';
+  document.getElementById('detailTotal').textContent = money(r.total_depreciation_value);
+  document.getElementById('exportLink').style.display = isAdmin(profile) ? '' : 'none';
+  document.getElementById('exportLink').onclick = async (e) => { e.preventDefault(); await downloadRentalCsv(profile, r); };
   document.getElementById('detailCard').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -100,7 +112,14 @@ document.getElementById('closeDetail').addEventListener('click', () => {
   document.getElementById('detailCard').style.display = 'none';
 });
 
-load().catch(e => toast(e.message, 'error'));
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  renderNav('/lich-su.html', profile);
+  await load();
+}
+
+init().catch(e => toast(e.message, 'error'));
 </script>
 </body>
 </html>

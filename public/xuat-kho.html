@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Xuất kho - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
@@ -45,48 +46,48 @@
     <div class="row">
       <div>
         <div class="flex between">
-          <h3>Quét bằng camera điện thoại/máy tính</h3>
+          <h3>Quét bằng camera</h3>
           <button type="button" class="secondary" id="switchCamBtn" style="display:none;padding:5px 10px;font-size:12.5px">🔄 Đổi camera</button>
         </div>
         <div id="reader"></div>
-        <p class="muted" style="font-size:12.5px">Cần cấp quyền camera. Trên điện thoại nên mở trang này qua HTTPS để camera hoạt động. Nếu camera mở sai chiều (trước thay vì sau), bấm "Đổi camera".</p>
       </div>
       <div>
-        <h3>Hoặc nhập mã thủ công</h3>
-        <form id="manualForm" class="flex">
-          <input id="manualCode" placeholder="Nhập mã QR, VD: TS-00001" class="mono" style="flex:1">
-          <button type="submit">Thêm</button>
+        <h3>Hoặc nhập / quét bằng máy quét mã vạch (bàn phím)</h3>
+        <form id="manualForm">
+          <input id="manualCode" class="scan-input" placeholder="Quét hoặc gõ mã QR rồi Enter" autocomplete="off">
         </form>
+        <div id="flash" class="scan-flash" style="margin-top:10px">Sẵn sàng quét...</div>
+        <div class="flex between" style="margin-top:10px">
+          <div class="scan-count" id="scanCount">0</div>
+          <div class="right"><strong>Tổng khấu hao:</strong><br><span id="totalDep" style="font-size:20px;color:var(--primary-dark);font-weight:700"></span></div>
+        </div>
       </div>
     </div>
 
-    <h3 style="margin-top:16px">Danh sách thiết bị đã xuất</h3>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Mã QR</th><th>Nhóm/Model</th><th class="right">Khấu hao trừ</th><th></th></tr></thead>
-        <tbody id="itemsBody"></tbody>
-      </table>
-    </div>
-    <div class="flex between" style="margin-top:10px">
-      <div><strong>Tổng giá trị khấu hao đơn hàng:</strong> <span id="totalDep" style="font-size:18px;color:var(--primary-dark);font-weight:700"></span></div>
-      <div class="flex">
-        <a id="exportLink" href="#" class="btn secondary">Xuất CSV</a>
-        <button id="returnBtn" class="success">Thiết bị đã về kho</button>
-        <button id="closeBtn" class="danger">Đóng show</button>
-      </div>
+    <h3 style="margin-top:16px">Danh sách thiết bị đã xuất (mới nhất trên đầu)</h3>
+    <div class="scan-list" id="itemsList"></div>
+
+    <div class="flex" style="margin-top:14px">
+      <a id="exportLink" href="#" class="btn secondary">Xuất CSV</a>
+      <button id="closeBtn" class="danger">Đóng show (ngừng quét xuất)</button>
     </div>
   </div>
 </main>
 
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
 <script>
-renderNav('/xuat-kho.html');
+let profile = null;
 let currentRental = null;
+let currentItems = [];
 let scanner = null;
 let lastScan = { code: null, time: 0 };
+let busy = false;
 
 async function loadActive() {
-  const rentals = await api('/api/rentals');
+  const rentals = await listRentals();
   const active = rentals.filter(r => r.status === 'active');
   const el = document.getElementById('activeList');
   if (!active.length) {
@@ -96,8 +97,8 @@ async function loadActive() {
   el.innerHTML = active.map(r => `
     <div class="flex between" style="padding:10px 0;border-bottom:1px solid var(--border)">
       <div>
-        <strong>${esc(r.code)} — ${esc(r.showName)}</strong><br>
-        <span class="muted" style="font-size:12.5px">${esc(r.customer || '—')} · ${esc(r.location || '—')} · ${r.items.length} thiết bị</span>
+        <strong>${esc(r.code)} — ${esc(r.show_name)}</strong><br>
+        <span class="muted" style="font-size:12.5px">${esc(r.customer || '—')} · ${esc(r.location || '—')}</span>
       </div>
       <button class="secondary" data-id="${r.id}">Tiếp tục quét</button>
     </div>
@@ -112,60 +113,92 @@ document.getElementById('createForm').addEventListener('submit', async (e) => {
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd.entries());
   try {
-    const rental = await api('/api/rentals', { method: 'POST', body: JSON.stringify(body) });
+    const rental = await createRental(profile, body);
     toast('Đã tạo show ' + rental.code, 'success');
     openRental(rental.id);
   } catch (err) { toast(err.message, 'error'); }
 });
 
 async function openRental(id) {
-  currentRental = await api('/api/rentals/' + id);
+  currentRental = await getRental(id);
+  currentItems = await getRentalItems(id);
   document.getElementById('pickerSection').style.display = 'none';
   document.getElementById('scanSection').style.display = '';
   renderRental();
   startScanner();
+  document.getElementById('manualCode').focus();
 }
 
 function renderRental() {
   const r = currentRental;
-  document.getElementById('rentalTitle').textContent = r.code + ' — ' + r.showName;
+  document.getElementById('rentalTitle').textContent = r.code + ' — ' + r.show_name;
   document.getElementById('rentalMeta').textContent =
-    `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.startDateTime)} → ${fmtDate(r.endDateTime)}`;
-  document.getElementById('itemsBody').innerHTML = r.items.map(i => `
-    <tr>
-      <td class="mono">${esc(i.qrCode)}</td>
-      <td>${esc(i.brand)} ${esc(i.model)}</td>
-      <td class="right">${money(i.deductionValue)}</td>
-      <td><button class="danger" style="padding:4px 9px;font-size:12px" data-remove="${i.assetId}">Xoá</button></td>
-    </tr>
-  `).join('') || '<tr><td colspan="4" class="muted center">Chưa quét thiết bị nào</td></tr>';
-  document.getElementById('totalDep').textContent = money(r.totalDepreciationValue);
-  document.getElementById('exportLink').href = '/api/rentals/' + r.id + '/export.csv';
-  document.querySelectorAll('button[data-remove]').forEach(btn => {
+    `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.start_datetime)} → ${fmtDate(r.end_datetime)}`;
+  document.getElementById('scanCount').textContent = currentItems.length;
+  document.getElementById('totalDep').textContent = isAdmin(profile) ? money(r.total_depreciation_value) : '—';
+  document.getElementById('exportLink').href = '#';
+
+  const list = document.getElementById('itemsList');
+  list.innerHTML = currentItems.map(i => {
+    const a = i.assets || {};
+    return `
+    <div class="scan-list-row">
+      <div>
+        <span class="mono">${esc(a.qr_code)}</span> — ${esc(a.brand)} ${esc(a.model)}
+        <div class="muted" style="font-size:12px">${fmtDate(i.scanned_out_at)}</div>
+      </div>
+      <div class="flex">
+        ${isAdmin(profile) ? `<strong>${money(i.deduction_value)}</strong>` : ''}
+        <button class="danger" style="padding:4px 9px;font-size:12px" data-remove="${i.asset_id}">Xoá</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="empty-state">Chưa quét thiết bị nào</div>';
+
+  list.querySelectorAll('button[data-remove]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await api('/api/rentals/' + currentRental.id + '/items/' + btn.dataset.remove, { method: 'DELETE' });
-      currentRental = await api('/api/rentals/' + currentRental.id);
+      const item = currentItems.find(i => i.asset_id === btn.dataset.remove);
+      if (!item) return;
+      await sb.from('rental_items').delete().eq('id', item.id);
+      const asset = await getAsset(item.asset_id);
+      await sb.from('assets').update({
+        rental_count: Math.max(0, (asset.rental_count || 0) - 1),
+        total_depreciated: round2(Math.max(0, Number(asset.total_depreciated || 0) - Number(item.deduction_value))),
+        status: 'available'
+      }).eq('id', item.asset_id);
+      currentItems = await getRentalItems(currentRental.id);
+      currentRental = await getRental(currentRental.id);
       renderRental();
     });
   });
 }
 
+function flash(msg, ok) {
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.className = 'scan-flash ' + (ok ? 'ok' : 'err');
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = 'Sẵn sàng quét...'; el.className = 'scan-flash'; }, 1400);
+}
+
 async function addCode(code) {
   code = (code || '').trim();
-  if (!code) return;
+  if (!code || busy) return;
   const now = Date.now();
-  if (lastScan.code === code && now - lastScan.time < 3000) return; // debounce duplicate scans
+  if (lastScan.code === code && now - lastScan.time < 2500) return; // debounce duplicate scans
   lastScan = { code, time: now };
+  busy = true;
   try {
-    const result = await api('/api/rentals/' + currentRental.id + '/scan', {
-      method: 'POST', body: JSON.stringify({ code })
-    });
-    currentRental = result.rental;
+    const result = await scanCheckout(profile, currentRental, code);
+    currentItems = await getRentalItems(currentRental.id);
+    currentRental = await getRental(currentRental.id);
     renderRental();
-    toast('Đã thêm: ' + result.item.qrCode + ' (−' + money(result.item.deductionValue) + ')', 'success');
-    if (navigator.vibrate) navigator.vibrate(80);
+    flash('✓ ' + result.qrCode + (isAdmin(profile) ? ' (−' + money(result.deduction) + ')' : ''), true);
+    if (navigator.vibrate) navigator.vibrate(70);
   } catch (err) {
-    toast(err.message, 'error');
+    flash('✗ ' + err.message, false);
+    if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  } finally {
+    busy = false;
   }
 }
 
@@ -187,16 +220,15 @@ document.getElementById('backBtn').addEventListener('click', () => {
 
 document.getElementById('closeBtn').addEventListener('click', async () => {
   if (!confirm('Đóng show này? Bạn vẫn có thể xem lại trong Lịch sử.')) return;
-  await api('/api/rentals/' + currentRental.id + '/close', { method: 'POST' });
+  await closeRental(currentRental.id);
   toast('Đã đóng show', 'success');
   document.getElementById('backBtn').click();
 });
 
-document.getElementById('returnBtn').addEventListener('click', async () => {
-  if (!confirm('Xác nhận toàn bộ thiết bị đã trả về kho?')) return;
-  await api('/api/rentals/' + currentRental.id + '/return', { method: 'POST' });
-  toast('Đã cập nhật thiết bị về kho, sẵn sàng cho thuê tiếp', 'success');
-  document.getElementById('backBtn').click();
+document.getElementById('exportLink').addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (!isAdmin(profile)) { toast('Chỉ Quản trị mới xuất được báo cáo có giá trị', 'error'); return; }
+  await downloadRentalCsv(profile, currentRental);
 });
 
 let availableCameras = [];
@@ -204,16 +236,14 @@ let currentCameraIndex = 0;
 
 async function startScanner() {
   if (typeof Html5Qrcode === 'undefined') {
-    document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera (cần kết nối Internet). Dùng ô nhập mã thủ công bên cạnh.</p>';
+    document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera. Dùng ô nhập mã bên cạnh.</p>';
     return;
   }
   scanner = new Html5Qrcode('reader');
   try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
-
   const backIdx = availableCameras.findIndex(c => /back|rear|environment|sau/i.test(c.label || ''));
   currentCameraIndex = backIdx >= 0 ? backIdx : availableCameras.length - 1;
   if (currentCameraIndex < 0) currentCameraIndex = 0;
-
   document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
   await runCamera();
 }
@@ -224,7 +254,7 @@ async function runCamera() {
     await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
   } catch (e) {
     try { await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {}); }
-    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera: ' + esc(e2.message || String(e2)) + '. Dùng ô nhập mã thủ công bên cạnh.</p>'; }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
   }
 }
 
@@ -242,7 +272,14 @@ function stopScanner() {
   }
 }
 
-loadActive().catch(e => toast(e.message, 'error'));
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  renderNav('/xuat-kho.html', profile);
+  await loadActive();
+}
+
+init().catch(e => toast(e.message, 'error'));
 </script>
 </body>
 </html>

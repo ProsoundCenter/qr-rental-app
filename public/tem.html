@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>In tem QR - QR Rental Manager</title>
 <link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
   .label-sheet { display: flex; flex-wrap: wrap; gap: 6mm; margin-top: 14px; }
@@ -83,17 +84,24 @@
   </div>
 </main>
 
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
 <script>
-renderNav('/tem.html');
 const params = new URLSearchParams(location.search);
 let assets = [];
 let currentAsset = null;
 
 async function init() {
-  assets = await api('/api/assets');
+  const profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  renderNav('/tem.html', profile);
+
+  assets = await listAssets();
   const sel = document.getElementById('assetSelect');
-  sel.innerHTML = assets.map(a => `<option value="${a.id}">${esc(a.qrCode)} — ${esc(a.model)}</option>`).join('');
+  sel.innerHTML = assets.map(a => `<option value="${a.id}">${esc(a.qr_code)} — ${esc(a.model)}</option>`).join('');
   const preselect = params.get('id');
   if (preselect && assets.find(a => a.id === preselect)) sel.value = preselect;
   currentAsset = assets.find(a => a.id === sel.value) || assets[0];
@@ -120,7 +128,7 @@ function render() {
     div.appendChild(qrHolder);
     const code = document.createElement('div');
     code.className = 'code';
-    code.textContent = currentAsset.qrCode;
+    code.textContent = currentAsset.qr_code;
     const model = document.createElement('div');
     model.className = 'model';
     model.textContent = [currentAsset.brand, currentAsset.model].filter(Boolean).join(' ');
@@ -128,8 +136,8 @@ function render() {
     div.appendChild(model);
     sheet.appendChild(div);
     try {
-      new QRCode(qrHolder, { text: currentAsset.qrCode, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
-    } catch (e) { qrHolder.textContent = '[QR: ' + currentAsset.qrCode + ']'; }
+      new QRCode(qrHolder, { text: currentAsset.qr_code, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    } catch (e) { qrHolder.textContent = '[QR: ' + currentAsset.qr_code + ']'; }
   }
 }
 

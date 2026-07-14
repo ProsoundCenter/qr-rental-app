@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nhân viên - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <h1>Quản lý tài khoản nhân viên (Thao tác viên)</h1>
+  <p class="muted">Tài khoản Thao tác viên chỉ quét được Xuất kho / Nhập kho về và xem lịch sử — không thấy giá trị tiền, không sửa được danh mục thiết bị.</p>
+
+  <div class="card">
+    <h2>+ Tạo tài khoản Thao tác viên mới</h2>
+    <form id="createForm">
+      <div class="row">
+        <div>
+          <label>Tên đăng nhập *</label>
+          <input name="username" required placeholder="VD: thukho1" class="mono">
+        </div>
+        <div>
+          <label>Họ tên hiển thị</label>
+          <input name="fullName" placeholder="VD: Nguyễn Văn A">
+        </div>
+        <div>
+          <label>Mật khẩu *</label>
+          <input type="password" name="password" required minlength="6" placeholder="Tối thiểu 6 ký tự">
+        </div>
+      </div>
+      <button type="submit">Tạo tài khoản</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Danh sách nhân viên trong công ty</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Vai trò</th><th>Ngày tạo</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+let profile = null;
+
+async function load() {
+  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: true });
+  if (error) { toast(error.message, 'error'); return; }
+  document.getElementById('tbody').innerHTML = data.map(p => `
+    <tr>
+      <td class="mono">${esc(p.username)}</td>
+      <td>${esc(p.full_name || '—')}</td>
+      <td><span class="badge ${p.role === 'operator' ? 'closed' : 'active'}">${roleLabel(p.role)}</span></td>
+      <td>${fmtDate(p.created_at)}</td>
+    </tr>
+  `).join('');
+}
+
+function roleLabel(r) {
+  return { owner: 'Quản trị (chủ)', superadmin: 'Superadmin', operator: 'Thao tác viên', staff: 'Nhân viên' }[r] || r;
+}
+
+document.getElementById('createForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/create-staff', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token
+      },
+      body: JSON.stringify({ username: body.username, password: body.password, fullName: body.fullName, role: 'operator' })
+    });
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Không tạo được tài khoản');
+    toast('Đã tạo tài khoản thao tác viên: ' + result.username, 'success');
+    e.target.reset();
+    await load();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  renderNav('/staff.html', profile);
+  await load();
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>
