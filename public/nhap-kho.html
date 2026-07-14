@@ -21,21 +21,26 @@
     <div class="row">
       <div>
         <label>Nhóm sản phẩm / thiết bị *</label>
-        <input name="asset_group" required placeholder="VD: Âm thanh, Ánh sáng, Sân khấu...">
+        <input name="asset_group" required placeholder="VD: Âm thanh, Ánh sáng, Sân khấu..." list="groupList" autocomplete="off">
       </div>
       <div>
         <label>Chủng loại</label>
-        <input name="category" placeholder="VD: Loa, Micro, Đèn Moving head...">
+        <input name="category" placeholder="VD: Loa, Micro, Đèn Moving head..." list="categoryList" autocomplete="off">
       </div>
       <div>
         <label>Nhãn hiệu</label>
-        <input name="brand" placeholder="VD: JBL, Shure, Chauvet...">
+        <input name="brand" placeholder="VD: JBL, Shure, Chauvet..." list="brandList" autocomplete="off">
       </div>
       <div>
         <label>Model *</label>
-        <input name="model" required placeholder="VD: SRX835P">
+        <input name="model" required placeholder="VD: SRX835P" list="modelList" autocomplete="off">
+        <div id="modelHint" class="muted" style="font-size:12.5px;margin-top:4px"></div>
       </div>
     </div>
+    <datalist id="groupList"></datalist>
+    <datalist id="categoryList"></datalist>
+    <datalist id="brandList"></datalist>
+    <datalist id="modelList"></datalist>
     <div class="row">
       <div style="grid-column: 1 / -1">
         <label>Mô tả</label>
@@ -128,6 +133,48 @@ let profile = null;
 const params = new URLSearchParams(location.search);
 const assetId = params.get('id');
 const form = document.getElementById('form');
+let ALL_ASSETS = [];
+
+function fillDatalist(id, values) {
+  const uniq = [...new Set(values.map(v => (v || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+  document.getElementById(id).innerHTML = uniq.map(v => `<option value="${esc(v)}">`).join('');
+}
+
+function updateModelList() {
+  const brand = form.brand.value.trim().toLowerCase();
+  const pool = brand ? ALL_ASSETS.filter(a => (a.brand || '').trim().toLowerCase() === brand) : ALL_ASSETS;
+  fillDatalist('modelList', pool.map(a => a.model));
+  updateModelHint();
+}
+
+function updateModelHint() {
+  const brand = form.brand.value.trim().toLowerCase();
+  const model = form.model.value.trim().toLowerCase();
+  const hint = document.getElementById('modelHint');
+  if (!model) { hint.textContent = ''; return; }
+  const matches = ALL_ASSETS.filter(a =>
+    (a.model || '').trim().toLowerCase() === model &&
+    (!brand || (a.brand || '').trim().toLowerCase() === brand) &&
+    a.id !== assetId
+  );
+  if (!matches.length) { hint.textContent = ''; hint.style.color = ''; return; }
+  const sample = matches.slice(0, 5).map(a => a.qr_code).join(', ');
+  hint.textContent = `✓ Đã có ${matches.length} thiết bị cùng model này trong kho — mã: ${sample}${matches.length > 5 ? '…' : ''}. Nếu đây là thiết bị mới cùng loại thì cứ tiếp tục lưu.`;
+  hint.style.color = 'var(--primary-dark, #1e40af)';
+}
+
+async function loadSuggestions() {
+  try {
+    ALL_ASSETS = await listAssets();
+    fillDatalist('groupList', ALL_ASSETS.map(a => a.asset_group));
+    fillDatalist('categoryList', ALL_ASSETS.map(a => a.category));
+    fillDatalist('brandList', ALL_ASSETS.map(a => a.brand));
+    updateModelList();
+  } catch (e) { /* goi y khong bat buoc, bo qua neu loi */ }
+}
+
+form.brand.addEventListener('input', updateModelList);
+form.model.addEventListener('input', updateModelHint);
 
 function updatePeriodLabel() {
   const type = form.depreciation_type.value;
@@ -186,6 +233,7 @@ async function loadExisting() {
   document.getElementById('printLink').href = '/tem.html?id=' + a.id;
   updatePeriodLabel();
   updateQrPreview();
+  updateModelList();
 }
 
 form.addEventListener('submit', async (e) => {
@@ -219,6 +267,7 @@ async function init() {
   if (!profile) return;
   if (!requireAdmin(profile)) return;
   renderNav('/nhap-kho.html', profile);
+  await loadSuggestions();
   await loadExisting();
 }
 
