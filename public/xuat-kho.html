@@ -44,9 +44,12 @@
 
     <div class="row">
       <div>
-        <h3>Quét bằng camera điện thoại/máy tính</h3>
+        <div class="flex between">
+          <h3>Quét bằng camera điện thoại/máy tính</h3>
+          <button type="button" class="secondary" id="switchCamBtn" style="display:none;padding:5px 10px;font-size:12.5px">🔄 Đổi camera</button>
+        </div>
         <div id="reader"></div>
-        <p class="muted" style="font-size:12.5px">Cần cấp quyền camera. Trên điện thoại nên mở trang này qua HTTPS để camera hoạt động.</p>
+        <p class="muted" style="font-size:12.5px">Cần cấp quyền camera. Trên điện thoại nên mở trang này qua HTTPS để camera hoạt động. Nếu camera mở sai chiều (trước thay vì sau), bấm "Đổi camera".</p>
       </div>
       <div>
         <h3>Hoặc nhập mã thủ công</h3>
@@ -196,18 +199,45 @@ document.getElementById('returnBtn').addEventListener('click', async () => {
   document.getElementById('backBtn').click();
 });
 
-function startScanner() {
+let availableCameras = [];
+let currentCameraIndex = 0;
+
+async function startScanner() {
   if (typeof Html5Qrcode === 'undefined') {
     document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera (cần kết nối Internet). Dùng ô nhập mã thủ công bên cạnh.</p>';
     return;
   }
-  scanner = new Html5QrcodeScanner('reader', { fps: 10, qrbox: 220 }, false);
-  scanner.render((decodedText) => addCode(decodedText), () => {});
+  scanner = new Html5Qrcode('reader');
+  try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
+
+  const backIdx = availableCameras.findIndex(c => /back|rear|environment|sau/i.test(c.label || ''));
+  currentCameraIndex = backIdx >= 0 ? backIdx : availableCameras.length - 1;
+  if (currentCameraIndex < 0) currentCameraIndex = 0;
+
+  document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
+  await runCamera();
 }
+
+async function runCamera() {
+  const target = availableCameras[currentCameraIndex] ? availableCameras[currentCameraIndex].id : { facingMode: 'environment' };
+  try {
+    await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+  } catch (e) {
+    try { await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {}); }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera: ' + esc(e2.message || String(e2)) + '. Dùng ô nhập mã thủ công bên cạnh.</p>'; }
+  }
+}
+
+document.getElementById('switchCamBtn').addEventListener('click', async () => {
+  if (!scanner || availableCameras.length < 2) return;
+  try { await scanner.stop(); } catch (e) {}
+  currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
+  await runCamera();
+});
 
 function stopScanner() {
   if (scanner) {
-    scanner.clear().catch(() => {});
+    scanner.stop().then(() => scanner.clear()).catch(() => {});
     scanner = null;
   }
 }
