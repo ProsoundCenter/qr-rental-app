@@ -287,6 +287,22 @@ tr:hover td { background: #f9fafb; }
 
 a { color: var(--primary); }
 
+/* Nen hien dai + logo cho trang dang nhap / dang ky */
+body.auth-bg {
+  min-height: 100vh;
+  background:
+    radial-gradient(1100px circle at 12% 18%, rgba(124,58,237,0.35), transparent 42%),
+    radial-gradient(900px circle at 88% 82%, rgba(37,99,235,0.40), transparent 42%),
+    linear-gradient(160deg, #0b1220 0%, #16213e 45%, #1e3a8a 100%);
+}
+body.auth-bg main.narrow { padding-top: 80px; }
+body.auth-bg .card { box-shadow: 0 24px 70px rgba(2,6,23,0.45); border: none; }
+
+.auth-logo { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 20px; }
+.auth-logo .badge-icon { flex: none; filter: drop-shadow(0 6px 14px rgba(37,99,235,0.35)); }
+.auth-logo .word { font-size: 23px; font-weight: 800; letter-spacing: -0.02em; color: #0f172a; }
+.auth-logo .word .accent { background: linear-gradient(135deg, #2563eb, #7c3aed); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
 @media print {
   header.topbar, nav.tabs, .no-print { display: none !important; }
   body { background: #fff; }
