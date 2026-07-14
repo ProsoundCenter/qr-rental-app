@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quản trị hệ thống</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🛠️ Quản trị hệ thống (Superadmin)</div>
+  <button class="secondary" onclick="logout()">Đăng xuất</button>
+</header>
+<main>
+  <div class="grid" id="stats"></div>
+
+  <div class="card">
+    <div class="flex between">
+      <h2>Danh sách công ty</h2>
+      <button id="newCompanyBtn">+ Tạo công ty mới</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Công ty</th><th>SĐT</th><th>Trạng thái</th><th>Gói hiện tại</th><th>Hết hạn</th><th></th></tr></thead>
+        <tbody id="companiesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Lịch sử thanh toán (tất cả công ty)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mã GD</th><th>Công ty</th><th>Gói</th><th class="right">Số tiền</th><th>Cổng</th><th>Trạng thái</th><th>Thời gian</th></tr></thead>
+        <tbody id="paymentsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- Modal tao cong ty moi -->
+<dialog id="newCompanyDialog" style="border:none;border-radius:10px;padding:0;max-width:420px;width:90%">
+  <form id="newCompanyForm" class="card" style="margin:0">
+    <h2>Tạo công ty mới (thủ công)</h2>
+    <div style="margin-bottom:10px"><label>Tên công ty *</label><input name="companyName" required></div>
+    <div style="margin-bottom:10px"><label>SĐT</label><input name="phone"></div>
+    <div style="margin-bottom:10px"><label>Username chủ tài khoản *</label><input name="username" required></div>
+    <div style="margin-bottom:10px"><label>Mật khẩu *</label><input type="password" name="password" required minlength="6"></div>
+    <div class="flex">
+      <button type="submit">Tạo</button>
+      <button type="button" class="secondary" onclick="document.getElementById('newCompanyDialog').close()">Huỷ</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Modal kich hoat / gia han goi -->
+<dialog id="activateDialog" style="border:none;border-radius:10px;padding:0;max-width:420px;width:90%">
+  <form id="activateForm" class="card" style="margin:0">
+    <h2>Kích hoạt / Gia hạn gói</h2>
+    <p id="activateCompanyName" class="muted" style="margin-top:-8px"></p>
+    <div style="margin-bottom:10px"><label>Chọn gói *</label><select name="planId" id="activatePlanSelect" required></select></div>
+    <div class="flex">
+      <button type="submit">Kích hoạt</button>
+      <button type="button" class="secondary" onclick="document.getElementById('activateDialog').close()">Huỷ</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+let ME = null;
+
+async function init() {
+  const profile = await requireLogin();
+  if (!profile) return;
+  if (profile.role !== 'superadmin') {
+    toast('Không có quyền truy cập', 'error');
+    setTimeout(() => location.href = '/index.html', 1000);
+    return;
+  }
+  ME = profile;
+  await loadCompanies();
+  await loadPayments();
+}
+
+async function loadCompanies() {
+  const { data: companies, error } = await sb.from('companies').select('*').order('created_at', { ascending: false });
+  if (error) return toast(error.message, 'error');
+
+  const { data: subs } = await sb.from('subscriptions').select('*, plans(*)').order('created_at', { ascending: false });
+  const latestSubByCompany = {};
+  (subs || []).forEach(s => { if (!latestSubByCompany[s.company_id]) latestSubByCompany[s.company_id] = s; });
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${companies.length}</div><div class="label">Tổng số công ty</div></div>
+    <div class="stat"><div class="num">${companies.filter(c => (latestSubByCompany[c.id] || {}).status === 'active').length}</div><div class="label">Đang hoạt động</div></div>
+    <div class="stat"><div class="num">${companies.filter(c => !(latestSubByCompany[c.id])).length}</div><div class="label">Chưa có gói</div></div>
+  `;
+
+  document.getElementById('companiesBody').innerHTML = companies.map(c => {
+    const sub = latestSubByCompany[c.id];
+    return `
+    <tr>
+      <td>${esc(c.name)}</td>
+      <td>${esc(c.phone || '—')}</td>
+      <td><span class="badge ${c.status}">${c.status === 'active' ? 'Hoạt động' : 'Tạm ngưng'}</span></td>
+      <td>${sub ? esc(sub.plans?.name || '') + ' <span class="badge ' + sub.status + '">' + subLabel(sub.status) + '</span>' : '<span class="muted">Chưa có</span>'}</td>
+      <td>${sub && sub.expires_at ? fmtDate(sub.expires_at) : '—'}</td>
+      <td><button class="secondary" style="padding:5px 10px;font-size:12.5px" data-activate="${c.id}">Kích hoạt/Gia hạn</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted center">Chưa có công ty nào</td></tr>';
+
+  document.querySelectorAll('button[data-activate]').forEach(btn => {
+    btn.addEventListener('click', () => activateCompany(btn.dataset.activate));
+  });
+}
+
+function subLabel(s) {
+  return { active: 'Đang hoạt động', pending: 'Chờ TT', expired: 'Hết hạn', cancelled: 'Đã huỷ' }[s] || s;
+}
+
+let ACTIVATE_COMPANY_ID = null;
+let ACTIVATE_PLANS = [];
+
+async function activateCompany(companyId) {
+  const { data: plans, error } = await sb.from('plans').select('*').eq('active', true).order('price');
+  if (error) return toast(error.message, 'error');
+  ACTIVATE_COMPANY_ID = companyId;
+  ACTIVATE_PLANS = plans || [];
+  const row = document.querySelector(`button[data-activate="${companyId}"]`)?.closest('tr');
+  document.getElementById('activateCompanyName').textContent = row ? row.children[0].textContent : '';
+  document.getElementById('activatePlanSelect').innerHTML = ACTIVATE_PLANS
+    .map((p, i) => `<option value="${i}">${esc(p.name)} (${money(p.price)}/${p.duration_days} ngày)</option>`)
+    .join('');
+  document.getElementById('activateDialog').showModal();
+}
+
+document.getElementById('activateForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const idx = parseInt(document.getElementById('activatePlanSelect').value, 10);
+  const plan = ACTIVATE_PLANS[idx];
+  const companyId = ACTIVATE_COMPANY_ID;
+  if (!plan || !companyId) return;
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + plan.duration_days * 86400000);
+
+  const { data: sub, error: subErr } = await sb.from('subscriptions').insert({
+    company_id: companyId, plan_id: plan.id, status: 'active',
+    started_at: startedAt.toISOString(), expires_at: expiresAt.toISOString()
+  }).select().single();
+  if (subErr) return toast(subErr.message, 'error');
+
+  await sb.from('payments').insert({
+    company_id: companyId, subscription_id: sub.id, plan_id: plan.id,
+    amount: plan.price, gateway: 'manual', gateway_txn_ref: 'MANUAL-' + Date.now(),
+    status: 'success', paid_at: new Date().toISOString(),
+    gateway_response: { note: 'Kich hoat thu cong boi superadmin' }
+  });
+
+  document.getElementById('activateDialog').close();
+  toast('Đã kích hoạt gói cho công ty', 'success');
+  loadCompanies();
+  loadPayments();
+});
+
+async function loadPayments() {
+  const { data, error } = await sb.from('payments')
+    .select('*, companies(name), plans(name)')
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) return toast(error.message, 'error');
+  document.getElementById('paymentsBody').innerHTML = data.map(p => `
+    <tr>
+      <td class="mono" style="font-size:12px">${esc(p.gateway_txn_ref)}</td>
+      <td>${esc(p.companies?.name || '')}</td>
+      <td>${esc(p.plans?.name || '')}</td>
+      <td class="right">${money(p.amount)}</td>
+      <td>${esc(p.gateway)}</td>
+      <td><span class="badge ${p.status}">${p.status}</span></td>
+      <td>${fmtDate(p.created_at)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="7" class="muted center">Chưa có giao dịch nào</td></tr>';
+}
+
+document.getElementById('newCompanyBtn').addEventListener('click', () => {
+  document.getElementById('newCompanyDialog').showModal();
+});
+
+document.getElementById('newCompanyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const { data: { session } } = await sb.auth.getSession();
+  try {
+    const res = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/signup-company', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Tạo thất bại');
+    toast('Đã tạo công ty ' + body.companyName, 'success');
+    document.getElementById('newCompanyDialog').close();
+    e.target.reset();
+    loadCompanies();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+init();
+</script>
+</body>
+</html>
