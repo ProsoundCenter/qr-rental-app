@@ -54,6 +54,10 @@ function renderNav(activeHref, profile) {
   ).join('');
   const companyName = profile && profile.companies ? esc(profile.companies.name) : '';
   const roleLabel = isAdmin(profile) ? 'Quản trị' : 'Thao tác viên';
+  // Chi chu cong ty (owner) moi bam vao nhan "Quan tri" de vao trang doi username/mat khau/ten cong ty.
+  const roleBadgeHtml = (profile && profile.role === 'owner')
+    ? `<a href="/cai-dat.html" class="role-badge" style="text-decoration:none;cursor:pointer">${roleLabel}</a>`
+    : `<span class="role-badge">${roleLabel}</span>`;
   container.innerHTML = `
     <header class="topbar">
       <div class="brand" style="display:flex;align-items:center;gap:8px">
@@ -70,7 +74,7 @@ function renderNav(activeHref, profile) {
       </div>
       <nav class="tabs">${links}</nav>
       <div class="flex" style="gap:8px">
-        <span class="role-badge">${roleLabel}</span>
+        ${roleBadgeHtml}
         <button class="secondary" id="installAppBtn" style="display:none;padding:6px 12px;font-size:13px">📲 Cài app</button>
         <button class="secondary" id="logoutBtn" style="padding:6px 12px;font-size:13px">Đăng xuất</button>
       </div>
