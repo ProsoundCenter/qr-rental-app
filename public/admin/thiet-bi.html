@@ -13,6 +13,16 @@
 <meta name="apple-mobile-web-app-title" content="Rental APP">
 <script src="/js/pwa.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<style>
+  .pct-wrap { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+  .pct-bar { flex: 1; height: 8px; border-radius: 4px; background: #e5e7eb; overflow: hidden; }
+  .pct-bar-fill { height: 100%; border-radius: 4px; background: var(--muted); }
+  .pct-bar-fill.full { background: var(--success); }
+  .pct-bar-fill.near { background: var(--warn); }
+  .pct-text { font-size: 12.5px; font-weight: 700; min-width: 38px; text-align: right; }
+  .company-summary td.right, .company-summary th.right { text-align: right; }
+</style>
 </head>
 <body>
 <header class="topbar">
@@ -25,19 +35,35 @@
 </header>
 <main>
   <div class="card">
-    <h1 style="margin-bottom:4px">Danh mục thiết bị liên công ty</h1>
-    <p class="muted" style="margin-top:0">Tìm nhanh công ty nào đang có sẵn thiết bị để hỗ trợ thuê chéo giữa các đơn vị. Chỉ Superadmin xem được trang này.</p>
+    <h1 style="margin-bottom:4px">Thu hồi vốn thiết bị liên công ty</h1>
+    <p class="muted" style="margin-top:0">Theo dõi công ty nào đã thu hồi vốn đầu tư thiết bị (qua khấu hao) để ưu tiên chào bán sản phẩm/thiết bị mới. Chỉ Superadmin xem được trang này.</p>
     <div class="row" style="margin-top:10px">
       <div>
         <label>Tìm kiếm</label>
-        <input id="searchBox" placeholder="Tên công ty, nhóm, nhãn hiệu, model...">
+        <input id="searchBox" placeholder="Tên công ty, nhóm, nhãn hiệu, model, mã QR...">
+      </div>
+      <div>
+        <label>Công ty</label>
+        <select id="companyFilter"><option value="">Tất cả công ty</option></select>
+      </div>
+      <div>
+        <label>Nhóm thiết bị</label>
+        <select id="groupFilter"><option value="">Tất cả nhóm</option></select>
+      </div>
+      <div>
+        <label>% thu hồi vốn</label>
+        <select id="pctFilter">
+          <option value="">Tất cả</option>
+          <option value="full">Đã thu hồi 100%</option>
+          <option value="near">Gần thu hồi (≥ 80%)</option>
+          <option value="low">Chưa thu hồi nhiều (&lt; 80%)</option>
+        </select>
       </div>
       <div>
         <label>Trạng thái</label>
         <select id="statusFilter">
-          <option value="">Tất cả trạng thái</option>
-          <option value="available">Có sẵn</option>
-          <option value="reserved">Đang giữ chỗ</option>
+          <option value="">Tất cả</option>
+          <option value="available">Sẵn sàng</option>
           <option value="rented">Đang cho thuê</option>
         </select>
       </div>
@@ -47,32 +73,41 @@
   <div class="grid" id="stats"></div>
 
   <div class="card">
+    <div class="flex between">
+      <h2 style="margin-bottom:4px">Tổng hợp theo công ty</h2>
+    </div>
+    <p class="muted" style="margin-top:0">Sắp xếp theo % thu hồi vốn trung bình giảm dần — công ty ở đầu danh sách là ứng viên ưu tiên để chào sản phẩm mới.</p>
+    <div class="table-wrap">
+      <table class="company-summary">
+        <thead>
+          <tr>
+            <th>Công ty</th><th>SĐT</th><th class="center">Số thiết bị</th>
+            <th class="right">Tổng đầu tư</th><th class="right">Đã thu hồi</th><th class="right">Còn lại</th>
+            <th class="center">% thu hồi TB</th><th class="center">Đã thu hồi 100%</th>
+          </tr>
+        </thead>
+        <tbody id="companyBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex between">
+      <h2 style="margin-bottom:4px">Chi tiết từng thiết bị</h2>
+      <button type="button" class="secondary" id="exportBtn">📊 Xuất Excel (theo bộ lọc)</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Công ty</th><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model</th>
-            <th class="center">Tổng</th><th class="center">Đang thuê</th><th class="center">Đang giữ chỗ</th><th class="center">Còn trống</th><th></th>
+            <th>Công ty</th><th>Nhóm / Chủng loại</th><th>Nhãn hiệu / Model</th><th>Mã QR</th><th>Trạng thái</th>
+            <th class="right">Giá trị nhập</th><th class="right">Đã thu hồi</th><th>% thu hồi</th><th class="right">Còn lại</th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
     <div id="empty" class="empty-state" style="display:none">Không tìm thấy thiết bị phù hợp.</div>
-  </div>
-
-  <div class="card" id="detailCard" style="display:none">
-    <div class="flex between">
-      <h2 id="detailTitle"></h2>
-      <button class="secondary" id="closeDetail">Đóng</button>
-    </div>
-    <p class="muted" id="detailMeta"></p>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Mã QR</th><th>Trạng thái</th></tr></thead>
-        <tbody id="detailBody"></tbody>
-      </table>
-    </div>
   </div>
 </main>
 
@@ -82,11 +117,8 @@
 <script src="/js/data.js"></script>
 <script>
 let ME = null;
-let CATALOG = [];
-
-function statusLabel(s) {
-  return { available: 'Có sẵn', reserved: 'Đang giữ chỗ', rented: 'Đang cho thuê' }[s] || s;
-}
+let ALL = [];
+let FILTERED = [];
 
 async function init() {
   const profile = await requireLogin();
@@ -98,75 +130,126 @@ async function init() {
   }
   ME = profile;
   try {
-    CATALOG = await getCrossCompanyCatalog(profile);
+    ALL = await getCrossCompanyFinance(profile);
+    fillFilterOptions();
     render();
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
+function fillFilterOptions() {
+  const companies = [...new Set(ALL.map(a => a.companyName))].sort((a, b) => a.localeCompare(b, 'vi'));
+  document.getElementById('companyFilter').innerHTML = '<option value="">Tất cả công ty</option>' +
+    companies.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const groups = [...new Set(ALL.map(a => a.assetGroup).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+  document.getElementById('groupFilter').innerHTML = '<option value="">Tất cả nhóm</option>' +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+}
+
+function pctClass(pct) {
+  if (pct >= 100) return 'full';
+  if (pct >= 80) return 'near';
+  return '';
+}
+
+function pctBar(pct) {
+  return `<div class="pct-wrap">
+    <div class="pct-bar"><div class="pct-bar-fill ${pctClass(pct)}" style="width:${Math.min(100, pct)}%"></div></div>
+    <span class="pct-text">${pct.toFixed(0)}%</span>
+  </div>`;
+}
+
 function render() {
   const q = document.getElementById('searchBox').value.trim().toLowerCase();
+  const companyF = document.getElementById('companyFilter').value;
+  const groupF = document.getElementById('groupFilter').value;
+  const pctF = document.getElementById('pctFilter').value;
   const statusF = document.getElementById('statusFilter').value;
 
-  let rows = CATALOG.filter(g => {
+  FILTERED = ALL.filter(a => {
     if (q) {
-      const hay = [g.companyName, g.assetGroup, g.category, g.brand, g.model].join(' ').toLowerCase();
+      const hay = [a.companyName, a.assetGroup, a.category, a.brand, a.model, a.qrCode].join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (statusF === 'available' && g.available <= 0) return false;
-    if (statusF === 'reserved' && g.reserved <= 0) return false;
-    if (statusF === 'rented' && g.rented <= 0) return false;
+    if (companyF && a.companyName !== companyF) return false;
+    if (groupF && a.assetGroup !== groupF) return false;
+    if (pctF === 'full' && !a.fullyRecovered) return false;
+    if (pctF === 'near' && !(a.recoveredPct >= 80)) return false;
+    if (pctF === 'low' && !(a.recoveredPct < 80)) return false;
+    if (statusF && a.status !== statusF) return false;
     return true;
   });
 
+  const totalImport = FILTERED.reduce((s, a) => s + a.importValue, 0);
+  const totalDep = FILTERED.reduce((s, a) => s + a.depreciated, 0);
+  const totalRemaining = FILTERED.reduce((s, a) => s + a.remaining, 0);
+  const fullyRecoveredCount = FILTERED.filter(a => a.fullyRecovered).length;
+
   document.getElementById('stats').innerHTML = `
-    <div class="stat"><div class="num">${CATALOG.length}</div><div class="label">Số model (tất cả công ty)</div></div>
-    <div class="stat"><div class="num">${CATALOG.reduce((s, g) => s + g.total, 0)}</div><div class="label">Tổng số thiết bị</div></div>
-    <div class="stat"><div class="num">${CATALOG.reduce((s, g) => s + g.available, 0)}</div><div class="label">Đang có sẵn (toàn hệ thống)</div></div>
+    <div class="stat"><div class="num">${FILTERED.length}</div><div class="label">Thiết bị (theo bộ lọc)</div></div>
+    <div class="stat"><div class="num">${fullyRecoveredCount}</div><div class="label">Đã thu hồi 100% vốn</div></div>
+    <div class="stat"><div class="num">${money(totalImport)}</div><div class="label">Tổng giá trị đầu tư</div></div>
+    <div class="stat"><div class="num">${money(totalDep)}</div><div class="label">Tổng đã thu hồi</div></div>
+    <div class="stat"><div class="num">${money(totalRemaining)}</div><div class="label">Tổng giá trị còn lại</div></div>
   `;
 
-  document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
-  document.getElementById('tbody').innerHTML = rows.map((g, i) => `
+  renderCompanySummary();
+
+  document.getElementById('empty').style.display = FILTERED.length ? 'none' : 'block';
+  document.getElementById('tbody').innerHTML = FILTERED.map(a => `
     <tr>
-      <td>${esc(g.companyName)}</td>
-      <td>${esc([g.assetGroup, g.category].filter(Boolean).join(' / ') || '—')}</td>
-      <td>${esc(g.brand || '—')}</td>
-      <td>${esc(g.model)}</td>
-      <td class="center">${g.total}</td>
-      <td class="center">${g.rented || '—'}</td>
-      <td class="center">${g.reserved || '—'}</td>
-      <td class="center" style="font-weight:700;color:${g.available > 0 ? 'var(--success)' : 'var(--muted)'}">${g.available}</td>
-      <td><button class="secondary" style="padding:5px 10px;font-size:12.5px" data-detail="${esc(g.companyId + '||' + modelKey(g.assetGroup, g.category, g.brand, g.model))}">Chi tiết</button></td>
+      <td>${esc(a.companyName)}${a.companyPhone ? '<div class="muted" style="font-size:11.5px">' + esc(a.companyPhone) + '</div>' : ''}</td>
+      <td>${esc([a.assetGroup, a.category].filter(Boolean).join(' / ') || '—')}</td>
+      <td>${esc([a.brand, a.model].filter(Boolean).join(' / '))}</td>
+      <td class="mono">${esc(a.qrCode)}</td>
+      <td><span class="badge ${a.status}">${a.status === 'rented' ? 'Đang cho thuê' : 'Sẵn sàng'}</span></td>
+      <td class="right">${money(a.importValue)}</td>
+      <td class="right">${money(a.depreciated)}</td>
+      <td>${pctBar(a.recoveredPct)}</td>
+      <td class="right">${money(a.remaining)}</td>
     </tr>
   `).join('');
+}
 
-  document.querySelectorAll('button[data-detail]').forEach(btn => {
-    btn.addEventListener('click', () => showDetail(btn.dataset.detail));
+function renderCompanySummary() {
+  const byCompany = {};
+  FILTERED.forEach(a => {
+    if (!byCompany[a.companyName]) {
+      byCompany[a.companyName] = { name: a.companyName, phone: a.companyPhone, count: 0, importValue: 0, depreciated: 0, remaining: 0, fullyRecovered: 0 };
+    }
+    const c = byCompany[a.companyName];
+    c.count++;
+    c.importValue += a.importValue;
+    c.depreciated += a.depreciated;
+    c.remaining += a.remaining;
+    if (a.fullyRecovered) c.fullyRecovered++;
   });
-}
+  const rows = Object.values(byCompany).map(c => Object.assign(c, {
+    avgPct: c.importValue > 0 ? (c.depreciated / c.importValue) * 100 : 0
+  })).sort((x, y) => y.avgPct - x.avgPct);
 
-function showDetail(key) {
-  const g = CATALOG.find(x => (x.companyId + '||' + modelKey(x.assetGroup, x.category, x.brand, x.model)) === key);
-  if (!g) return;
-  document.getElementById('detailCard').style.display = '';
-  document.getElementById('detailTitle').textContent = g.companyName + ' — ' + g.model;
-  document.getElementById('detailMeta').textContent =
-    `${[g.assetGroup, g.category, g.brand].filter(Boolean).join(' / ')} · Tổng ${g.total} · Đang thuê ${g.rented} · Đang giữ chỗ ${g.reserved} (theo model, chưa gán máy cụ thể) · Còn trống ${g.available}`;
-  document.getElementById('detailBody').innerHTML = g.units.map(u => `
+  document.getElementById('companyBody').innerHTML = rows.map(c => `
     <tr>
-      <td class="mono">${esc(u.qrCode)}</td>
-      <td><span class="badge ${u.status}">${statusLabel(u.status)}</span></td>
+      <td>${esc(c.name)}</td>
+      <td>${esc(c.phone || '—')}</td>
+      <td class="center">${c.count}</td>
+      <td class="right">${money(c.importValue)}</td>
+      <td class="right">${money(c.depreciated)}</td>
+      <td class="right">${money(c.remaining)}</td>
+      <td>${pctBar(c.avgPct)}</td>
+      <td class="center" style="font-weight:700;color:${c.fullyRecovered > 0 ? 'var(--success)' : 'var(--muted)'}">${c.fullyRecovered}</td>
     </tr>
-  `).join('') || '<tr><td colspan="2" class="muted center">Không có thiết bị nào</td></tr>';
-  document.getElementById('detailCard').scrollIntoView({ behavior: 'smooth' });
+  `).join('') || '<tr><td colspan="8" class="muted center">Không có dữ liệu</td></tr>';
 }
 
-document.getElementById('closeDetail').addEventListener('click', () => {
-  document.getElementById('detailCard').style.display = 'none';
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (!FILTERED.length) return toast('Không có dữ liệu để xuất', 'error');
+  downloadCrossCompanyFinanceXlsx(FILTERED);
 });
-document.getElementById('searchBox').addEventListener('input', render);
-document.getElementById('statusFilter').addEventListener('change', render);
+
+['searchBox'].forEach(id => document.getElementById(id).addEventListener('input', render));
+['companyFilter', 'groupFilter', 'pctFilter', 'statusFilter'].forEach(id => document.getElementById(id).addEventListener('change', render));
 
 init();
 </script>
