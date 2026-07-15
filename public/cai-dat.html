@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cài đặt tài khoản - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1c6dd0">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rental APP">
+<script src="/js/pwa.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <h1>Cài đặt tài khoản</h1>
+  <p class="muted">Chỉ Admin (chủ tài khoản công ty) mới đổi được các thông tin này.</p>
+
+  <div class="card">
+    <h2>Đổi tên đăng nhập</h2>
+    <p class="muted" style="margin-top:-6px">Tên đăng nhập hiện tại: <strong id="curUsername" class="mono"></strong></p>
+    <form id="usernameForm">
+      <div class="row">
+        <div>
+          <label>Tên đăng nhập mới</label>
+          <input name="newUsername" class="mono" placeholder="chi-chu-thuong-so-va-dau-cham-gach-duoi" required minlength="3">
+        </div>
+      </div>
+      <button type="submit">Đổi tên đăng nhập</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Đổi mật khẩu</h2>
+    <form id="passwordForm">
+      <div class="row">
+        <div>
+          <label>Mật khẩu mới</label>
+          <input type="password" name="newPassword" required minlength="6" placeholder="Tối thiểu 6 ký tự">
+        </div>
+        <div>
+          <label>Nhập lại mật khẩu mới</label>
+          <input type="password" name="newPassword2" required minlength="6">
+        </div>
+      </div>
+      <button type="submit">Đổi mật khẩu</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Đổi tên công ty</h2>
+    <p class="muted" style="margin-top:-6px">Tên hiện tại: <strong id="curCompanyName"></strong></p>
+    <form id="companyForm">
+      <div class="row">
+        <div>
+          <label>Tên công ty mới</label>
+          <input name="newCompanyName" required>
+        </div>
+      </div>
+      <button type="submit">Đổi tên công ty</button>
+    </form>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script>
+let profile = null;
+
+async function callManageAccount(payload) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(window.APP_CONFIG.SUPABASE_URL + '/functions/v1/manage-account', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+    body: JSON.stringify(payload)
+  });
+  const result = await res.json();
+  if (!res.ok) throw new Error(result.error || 'Không thực hiện được thao tác');
+  return result;
+}
+
+document.getElementById('usernameForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const newUsername = fd.get('newUsername');
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    await callManageAccount({ action: 'self_update', newUsername });
+    toast('Đã đổi tên đăng nhập. Lần sau đăng nhập bằng tên mới.', 'success');
+    e.target.reset();
+    document.getElementById('curUsername').textContent = newUsername.trim().toLowerCase();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('passwordForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const p1 = fd.get('newPassword'), p2 = fd.get('newPassword2');
+  if (p1 !== p2) return toast('Hai mật khẩu nhập lại không khớp', 'error');
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    await callManageAccount({ action: 'self_update', newPassword: p1 });
+    toast('Đã đổi mật khẩu', 'success');
+    e.target.reset();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('companyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const newCompanyName = fd.get('newCompanyName');
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  try {
+    await callManageAccount({ action: 'self_update', newCompanyName });
+    toast('Đã đổi tên công ty', 'success');
+    document.getElementById('curCompanyName').textContent = newCompanyName.trim();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  if (profile.role !== 'owner') {
+    toast('Chỉ Admin (chủ tài khoản công ty) mới vào được trang này', 'error');
+    setTimeout(() => location.href = '/index.html', 1000);
+    return;
+  }
+  renderNav('/cai-dat.html', profile);
+  document.getElementById('curUsername').textContent = profile.username;
+  document.getElementById('curCompanyName').textContent = profile.companies ? profile.companies.name : '—';
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>
