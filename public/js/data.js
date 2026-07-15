@@ -405,6 +405,60 @@ async function getCrossCompanyCatalog(profile) {
     .sort((x, y) => (x.companyName + x.model).localeCompare(y.companyName + y.model, 'vi'));
 }
 
+// ---------- TAI CHINH THIET BI LIEN CONG TY (chi Superadmin) ----------
+// Phuc vu muc dich ban hang: liet ke TUNG thiet bi cua MOI cong ty kem gia tri nhap,
+// da khau hao, % da thu hoi von — de Prosound biet cong ty nao da thu hoi von thiet bi
+// dau tu (uu tien chao san pham/thiet bi moi). RLS is_superadmin() da cho doc toan bo
+// assets/companies nen khong can migration moi.
+async function getCrossCompanyFinance(profile) {
+  if (!profile || profile.role !== 'superadmin') throw new Error('Chỉ Superadmin mới xem được dữ liệu liên công ty');
+
+  const { data: companies, error: cErr } = await sb.from('companies').select('id, name, phone, status');
+  if (cErr) throw cErr;
+  const companyMap = {};
+  companies.forEach(c => { companyMap[c.id] = c; });
+
+  const { data: assets, error: aErr } = await sb.from('assets')
+    .select('id, company_id, asset_group, category, brand, model, status, qr_code, import_value, total_depreciated, rental_count, created_at, import_date');
+  if (aErr) throw aErr;
+
+  return assets.map(a => {
+    const importValue = Number(a.import_value) || 0;
+    const depreciated = Math.min(Number(a.total_depreciated) || 0, importValue);
+    const remaining = Math.max(0, importValue - depreciated);
+    const pct = importValue > 0 ? Math.min(100, round2((depreciated / importValue) * 100)) : 0;
+    const c = companyMap[a.company_id] || {};
+    return {
+      id: a.id, companyId: a.company_id, companyName: c.name || '—', companyPhone: c.phone || '', companyStatus: c.status || '',
+      assetGroup: a.asset_group || '', category: a.category || '', brand: a.brand || '', model: a.model || '',
+      qrCode: a.qr_code, status: a.status, rentalCount: a.rental_count || 0,
+      createdAt: a.created_at, importDate: a.import_date,
+      importValue, depreciated, remaining, recoveredPct: pct, fullyRecovered: importValue > 0 && depreciated >= importValue
+    };
+  }).sort((x, y) => y.recoveredPct - x.recoveredPct);
+}
+
+// Xuat danh sach tai chinh thiet bi lien cong ty (theo bo loc hien tai) ra Excel cho doi sale.
+function downloadCrossCompanyFinanceXlsx(rows) {
+  if (typeof XLSX === 'undefined') { toast('Không tải được thư viện Excel, vui lòng thử lại', 'error'); return; }
+  const headers = ['Công ty', 'SĐT công ty', 'Nhóm', 'Chủng loại', 'Nhãn hiệu', 'Model', 'Mã QR', 'Trạng thái', 'Số lần đã thuê', 'Giá trị nhập (đ)', 'Đã thu hồi (đ)', '% thu hồi', 'Còn lại (đ)', 'Đã thu hồi 100%?'];
+  const aoa = [headers];
+  rows.forEach(g => {
+    aoa.push([
+      g.companyName, g.companyPhone, g.assetGroup, g.category, g.brand, g.model, g.qrCode,
+      g.status === 'rented' ? 'Đang cho thuê' : 'Sẵn sàng', g.rentalCount,
+      g.importValue, g.depreciated, g.recoveredPct, g.remaining, g.fullyRecovered ? 'Có' : ''
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 22 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 9 }, { wch: 14 }, { wch: 12 }];
+  for (let c = 0; c < headers.length; c++) xlsxSetStyle(ws, 0, c, xlsxHeaderStyle());
+  for (let r = 1; r < aoa.length; r++) for (let c = 0; c < headers.length; c++) xlsxSetStyle(ws, r, c, { border: xlsxBorderThin() });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Thu hoi von thiet bi');
+  XLSX.writeFile(wb, 'thu-hoi-von-thiet-bi-lien-cong-ty.xlsx');
+}
+
 // ---------- EXCEL (.xlsx) — dung thu vien xlsx-js-style (nap qua CDN, bien global XLSX) ----------
 
 function xlsxBorderThin() {
