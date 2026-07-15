@@ -36,7 +36,7 @@
       <div>
         <h3>Hoặc nhập / quét bằng máy quét mã vạch (bàn phím)</h3>
         <form id="manualForm">
-          <input id="manualCode" class="scan-input" placeholder="Quét hoặc gõ mã QR rồi Enter" autocomplete="off" autofocus>
+          <input id="manualCode" class="scan-input" placeholder="Quét hoặc gõ mã QR rồi Enter" autocomplete="off">
         </form>
         <div id="flash" class="scan-flash" style="margin-top:10px">Sẵn sàng quét...</div>
         <div class="scan-count" id="scanCount" style="margin-top:10px">0</div>
@@ -100,9 +100,11 @@ async function addCode(code) {
     });
     renderList();
     flash('✓ Đã nhận về: ' + a.qr_code, true);
+    playScanBeep(true);
     if (navigator.vibrate) navigator.vibrate(70);
   } catch (err) {
     flash('✗ ' + err.message, false);
+    playScanBeep(false);
     if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
   } finally {
     busy = false;
@@ -114,7 +116,7 @@ document.getElementById('manualForm').addEventListener('submit', (e) => {
   const input = document.getElementById('manualCode');
   addCode(input.value);
   input.value = '';
-  input.focus();
+  focusScanInputIfDesktop(input);
 });
 
 let availableCameras = [];
@@ -127,11 +129,17 @@ async function startScanner() {
   }
   scanner = new Html5Qrcode('reader');
   try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
-  const backIdx = availableCameras.findIndex(c => /back|rear|environment|sau/i.test(c.label || ''));
-  currentCameraIndex = backIdx >= 0 ? backIdx : availableCameras.length - 1;
-  if (currentCameraIndex < 0) currentCameraIndex = 0;
   document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
-  await runCamera();
+  try {
+    currentCameraIndex = await startBestBackCamera(scanner, availableCameras, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText));
+    attachZoomControl(scanner);
+  } catch (e) {
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
+  }
 }
 
 async function runCamera() {
@@ -161,7 +169,7 @@ async function init() {
   renderNav('/nhap-kho-ve.html', profile);
   renderList();
   startScanner();
-  document.getElementById('manualCode').focus();
+  focusScanInputIfDesktop(document.getElementById('manualCode'));
 }
 
 init().catch(e => toast(e.message, 'error'));

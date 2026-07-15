@@ -134,7 +134,7 @@ async function openRental(id) {
   document.getElementById('scanSection').style.display = '';
   renderRental();
   startScanner();
-  document.getElementById('manualCode').focus();
+  focusScanInputIfDesktop(document.getElementById('manualCode'));
 }
 
 function renderRental() {
@@ -195,9 +195,11 @@ async function addCode(code) {
     currentRental = await getRental(currentRental.id);
     renderRental();
     flash('✓ ' + result.qrCode + (isAdmin(profile) ? ' (−' + money(result.deduction) + ')' : ''), true);
+    playScanBeep(true);
     if (navigator.vibrate) navigator.vibrate(70);
   } catch (err) {
     flash('✗ ' + err.message, false);
+    playScanBeep(false);
     if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
   } finally {
     busy = false;
@@ -209,7 +211,7 @@ document.getElementById('manualForm').addEventListener('submit', (e) => {
   const input = document.getElementById('manualCode');
   addCode(input.value);
   input.value = '';
-  input.focus();
+  focusScanInputIfDesktop(input);
 });
 
 document.getElementById('backBtn').addEventListener('click', () => {
@@ -242,11 +244,17 @@ async function startScanner() {
   }
   scanner = new Html5Qrcode('reader');
   try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
-  const backIdx = availableCameras.findIndex(c => /back|rear|environment|sau/i.test(c.label || ''));
-  currentCameraIndex = backIdx >= 0 ? backIdx : availableCameras.length - 1;
-  if (currentCameraIndex < 0) currentCameraIndex = 0;
   document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
-  await runCamera();
+  try {
+    currentCameraIndex = await startBestBackCamera(scanner, availableCameras, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText));
+    attachZoomControl(scanner);
+  } catch (e) {
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => addCode(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
+  }
 }
 
 async function runCamera() {
