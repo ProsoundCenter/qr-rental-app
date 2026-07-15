@@ -15,7 +15,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <style>
-  .label-sheet { display: flex; flex-wrap: wrap; gap: 6mm; margin-top: 14px; }
   .label {
     border: 1px dashed #bbb;
     display: flex;
@@ -23,11 +22,12 @@
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 2mm;
+    padding: 1mm;
     background: #fff;
     box-sizing: border-box;
     overflow: hidden;
   }
+  .label.blank { border: none; visibility: hidden; }
   .label .code { font-family: "SF Mono", Consolas, monospace; font-weight: 700; }
   .label .model { color: #333; }
   .size-S { width: 30mm; height: 20mm; }
@@ -45,11 +45,22 @@
   .size-L .model { font-size: 10pt; }
   .size-L canvas, .size-L img { width: 32mm !important; height: 32mm !important; }
 
+  .sheet-page { display: grid; margin-bottom: 8px; }
   @media print {
-    .label { border: none; page-break-inside: avoid; }
-    .label-sheet { gap: 0; }
-    body.printing-single-per-page .label { page-break-after: always; }
+    .label.blank { border: none; }
+    .sheet-page { margin-bottom: 0; page-break-after: always; }
+    .sheet-page:last-child { page-break-after: auto; }
   }
+
+  .pos-grid { display: inline-grid; gap: 3px; background: #eef2f7; padding: 8px; border-radius: 8px; }
+  .pos-cell {
+    width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--border);
+    background: #fff; cursor: pointer; font-size: 9px; display: flex; align-items: center; justify-content: center;
+    color: var(--muted);
+  }
+  .pos-cell.skip { background: #e5e7eb; color: #9ca3af; }
+  .pos-cell.fill { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .pos-cell.start { outline: 2px solid var(--primary-dark); }
 </style>
 </head>
 <body>
@@ -75,19 +86,42 @@
         </select>
       </div>
       <div>
-        <label>Số lượng tem cần in (in lại nhiều lần)</label>
+        <label>Số lượng tem cần in</label>
         <input type="number" id="qty" min="1" value="1" step="1">
       </div>
-      <div style="display:flex; align-items:flex-end;">
-        <button id="printBtn">🖨️ In tem</button>
+    </div>
+    <p class="muted" style="margin-bottom:4px">Tem đang in trên tờ decal bế sẵn (dạng lưới). Khai báo đúng số cột/hàng và khoảng cách của tờ decal đang dùng, sau đó bấm chọn ô muốn bắt đầu in — các ô trước đó sẽ để trống (dành cho ô đã dùng trên tờ cũ).</p>
+    <div class="row">
+      <div>
+        <label>Số cột trên tờ decal</label>
+        <input type="number" id="cols" min="1" value="4" step="1">
+      </div>
+      <div>
+        <label>Số hàng trên tờ decal</label>
+        <input type="number" id="rows" min="1" value="8" step="1">
+      </div>
+      <div>
+        <label>Khoảng cách ngang (mm)</label>
+        <input type="number" id="gapX" min="0" value="0" step="0.5">
+      </div>
+      <div>
+        <label>Khoảng cách dọc (mm)</label>
+        <input type="number" id="gapY" min="0" value="0" step="0.5">
       </div>
     </div>
-    <p class="muted">Mã QR và model có thể chỉnh sửa tại trang <a href="/nhap-kho.html">Nhập kho</a>. Mỗi tem có thể in lại nhiều bản để dán lên nhiều mặt / thay thế tem cũ.</p>
+    <div style="margin-top:6px">
+      <label>Chọn ô bắt đầu in trên tờ decal (ô xám = bỏ trống, ô xanh = sẽ in)</label>
+      <div class="pos-grid" id="posGrid"></div>
+    </div>
+    <div class="flex" style="margin-top:14px">
+      <button id="printBtn">🖨️ In tem</button>
+    </div>
+    <p class="muted">Mã QR và model có thể chỉnh sửa tại trang <a href="/nhap-kho.html">Nhập kho</a>.</p>
   </div>
 
   <div class="card">
     <h2 class="no-print">Xem trước</h2>
-    <div class="label-sheet" id="sheet"></div>
+    <div id="sheetWrap"></div>
   </div>
 </main>
 
@@ -99,6 +133,7 @@
 const params = new URLSearchParams(location.search);
 let assets = [];
 let currentAsset = null;
+let startPos = 0; // vi tri o dau tien se in (0-indexed, theo thu tu tu trai qua phai, tren xuong duoi)
 
 async function init() {
   const profile = await requireLogin();
@@ -116,35 +151,106 @@ async function init() {
     currentAsset = assets.find(a => a.id === sel.value);
     render();
   });
-  document.getElementById('sizeSelect').addEventListener('change', render);
-  document.getElementById('qty').addEventListener('input', render);
+  document.getElementById('sizeSelect').addEventListener('change', () => { applySizeDefaults(); render(); });
+  ['qty', 'cols', 'rows', 'gapX', 'gapY'].forEach(id => {
+    document.getElementById(id).addEventListener('input', () => { clampStartPos(); render(); });
+  });
   document.getElementById('printBtn').addEventListener('click', () => window.print());
   render();
 }
 
+// Goi y so cot/hang mac dinh theo kich thuoc tem, nguoi dung nen chinh lai cho khop
+// dung voi to decal thuc te dang dung (moi loai decal ban san co so o khac nhau).
+function applySizeDefaults() {
+  const size = document.getElementById('sizeSelect').value;
+  const defaults = { S: [6, 10], M: [4, 8], L: [2, 5] };
+  const [c, r] = defaults[size] || [4, 8];
+  document.getElementById('cols').value = c;
+  document.getElementById('rows').value = r;
+}
+
+function gridSize() {
+  const cols = Math.max(1, parseInt(document.getElementById('cols').value, 10) || 1);
+  const rows = Math.max(1, parseInt(document.getElementById('rows').value, 10) || 1);
+  return { cols, rows };
+}
+
+function clampStartPos() {
+  const { cols, rows } = gridSize();
+  const perPage = cols * rows;
+  if (startPos >= perPage) startPos = perPage - 1;
+  if (startPos < 0) startPos = 0;
+}
+
+function renderPosGrid() {
+  const { cols, rows } = gridSize();
+  const qty = Math.max(1, parseInt(document.getElementById('qty').value, 10) || 1);
+  const perPage = cols * rows;
+  const grid = document.getElementById('posGrid');
+  grid.style.gridTemplateColumns = `repeat(${cols}, 22px)`;
+  grid.innerHTML = '';
+  for (let i = 0; i < perPage; i++) {
+    const cell = document.createElement('div');
+    let cls = 'pos-cell';
+    if (i < startPos) cls += ' skip';
+    else if (i < startPos + qty) cls += ' fill';
+    if (i === startPos) cls += ' start';
+    cell.className = cls;
+    cell.title = 'Ô số ' + (i + 1);
+    cell.addEventListener('click', () => { startPos = i; render(); });
+    grid.appendChild(cell);
+  }
+}
+
 function render() {
-  const sheet = document.getElementById('sheet');
-  sheet.innerHTML = '';
-  if (!currentAsset) { sheet.innerHTML = '<div class="empty-state">Chưa có tài sản nào. Hãy nhập kho trước.</div>'; return; }
+  renderPosGrid();
+  const sheetWrap = document.getElementById('sheetWrap');
+  sheetWrap.innerHTML = '';
+  if (!currentAsset) { sheetWrap.innerHTML = '<div class="empty-state">Chưa có tài sản nào. Hãy nhập kho trước.</div>'; return; }
+
   const size = document.getElementById('sizeSelect').value;
   const qty = Math.max(1, parseInt(document.getElementById('qty').value, 10) || 1);
-  for (let i = 0; i < qty; i++) {
-    const div = document.createElement('div');
-    div.className = 'label size-' + size;
-    const qrHolder = document.createElement('div');
-    div.appendChild(qrHolder);
-    const code = document.createElement('div');
-    code.className = 'code';
-    code.textContent = currentAsset.qr_code;
-    const model = document.createElement('div');
-    model.className = 'model';
-    model.textContent = [currentAsset.brand, currentAsset.model].filter(Boolean).join(' ');
-    div.appendChild(code);
-    div.appendChild(model);
-    sheet.appendChild(div);
-    try {
-      new QRCode(qrHolder, { text: currentAsset.qr_code, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
-    } catch (e) { qrHolder.textContent = '[QR: ' + currentAsset.qr_code + ']'; }
+  const { cols, rows } = gridSize();
+  const gapX = Number(document.getElementById('gapX').value) || 0;
+  const gapY = Number(document.getElementById('gapY').value) || 0;
+  const perPage = cols * rows;
+
+  // Danh sach "o" theo thu tu: startPos o dau la trong (blank), sau do la qty tem that.
+  const totalSlots = startPos + qty;
+  const numPages = Math.ceil(totalSlots / perPage);
+
+  for (let p = 0; p < numPages; p++) {
+    const page = document.createElement('div');
+    page.className = 'sheet-page';
+    page.style.gridTemplateColumns = `repeat(${cols}, auto)`;
+    page.style.gap = gapY + 'mm ' + gapX + 'mm';
+    const pageStart = p * perPage;
+    const pageEnd = Math.min(perPage, totalSlots - pageStart);
+    for (let i = 0; i < pageEnd; i++) {
+      const slotIndex = pageStart + i;
+      const isBlank = slotIndex < startPos;
+      const div = document.createElement('div');
+      div.className = 'label size-' + size + (isBlank ? ' blank' : '');
+      if (!isBlank) {
+        const qrHolder = document.createElement('div');
+        div.appendChild(qrHolder);
+        const code = document.createElement('div');
+        code.className = 'code';
+        code.textContent = currentAsset.qr_code;
+        const model = document.createElement('div');
+        model.className = 'model';
+        model.textContent = [currentAsset.brand, currentAsset.model].filter(Boolean).join(' ');
+        div.appendChild(code);
+        div.appendChild(model);
+        page.appendChild(div);
+        try {
+          new QRCode(qrHolder, { text: currentAsset.qr_code, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        } catch (e) { qrHolder.textContent = '[QR: ' + currentAsset.qr_code + ']'; }
+      } else {
+        page.appendChild(div);
+      }
+    }
+    sheetWrap.appendChild(page);
   }
 }
 
