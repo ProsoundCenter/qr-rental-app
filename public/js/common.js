@@ -32,6 +32,7 @@ const ADMIN_NAV = [
   { href: '/tem.html', label: 'In tem QR' },
   { href: '/xuat-kho.html', label: 'Xuất kho' },
   { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
+  { href: '/giu-cho.html', label: 'Giữ chỗ' },
   { href: '/lich-su.html', label: 'Lịch sử' },
   { href: '/staff.html', label: 'Nhân viên' },
   { href: '/choose-plan.html', label: 'Gói dịch vụ' }

@@ -253,6 +253,106 @@ async function removeRentalItem(rentalId, item) {
   if (rentalErr) throw rentalErr;
 }
 
+// ---------- GIU CHO (dat lich truoc theo model + so luong, chua gan may cu the) ----------
+// Chi Admin (owner/superadmin) duoc tao - da chan them o RLS (reservation_items_insert,
+// rentals_insert khi status='reserved'), o day chan them lan nua o UI cho ro rang.
+
+function modelKey(assetGroup, category, brand, model) {
+  return [assetGroup || '', category || '', brand || '', model || ''].join('||').trim().toLowerCase();
+}
+
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+// Tao 1 "show giu cho": 1 dong rentals (status='reserved', ma GC-xxxxx) + nhieu dong
+// reservation_items (model + so luong). Khong dung toi assets cu the.
+async function createReservation(profile, b, lines) {
+  if (!isAdmin(profile)) throw new Error('Chỉ Quản trị mới tạo được giữ chỗ');
+  if (!b.showName || !b.startDateTime || !b.endDateTime) {
+    throw new Error('Thiếu Tên show, thời gian bắt đầu hoặc kết thúc');
+  }
+  const cleanLines = (lines || []).filter(l => l.model && Number(l.quantity) > 0);
+  if (!cleanLines.length) throw new Error('Cần thêm ít nhất 1 dòng thiết bị cần giữ chỗ (model + số lượng)');
+
+  const code = await nextCode(profile.company_id, 'rentals', 'GC-');
+  const row = {
+    company_id: profile.company_id,
+    code,
+    show_name: b.showName,
+    customer: b.customer || '',
+    location: b.location || '',
+    start_datetime: b.startDateTime,
+    end_datetime: b.endDateTime,
+    status: 'reserved',
+    created_by: profile.id
+  };
+  const { data: rental, error } = await sb.from('rentals').insert(row).select().single();
+  if (error) throw error;
+
+  const itemRows = cleanLines.map(l => ({
+    company_id: profile.company_id,
+    rental_id: rental.id,
+    asset_group: l.asset_group || '',
+    category: l.category || '',
+    brand: l.brand || '',
+    model: l.model,
+    quantity: Number(l.quantity),
+    created_by: profile.id
+  }));
+  const { error: itemErr } = await sb.from('reservation_items').insert(itemRows);
+  if (itemErr) throw itemErr;
+  return rental;
+}
+
+async function getReservationItems(rentalId) {
+  const { data, error } = await sb.from('reservation_items').select('*').eq('rental_id', rentalId).order('created_at', { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+// "Chot don": chuyen giu cho -> show that su (status 'active'), tu do xuat hien binh
+// thuong trong Xuat kho theo Show de nhan vien quet ma QR that nhu quy trinh thuong.
+async function confirmReservation(rentalId) {
+  const { error } = await sb.from('rentals').update({ status: 'active' }).eq('id', rentalId);
+  if (error) throw error;
+}
+
+// Huy giu cho (khach khong chot). Khong dung toi assets vi giu cho khong gan may cu the.
+async function cancelReservation(rentalId) {
+  const { error } = await sb.from('rentals').update({ status: 'cancelled' }).eq('id', rentalId);
+  if (error) throw error;
+}
+
+// Tinh so luong con trong cua 1 model trong khoang [startDateTime, endDateTime):
+// tong so may cong ty co - (dang giu cho o show khac trung ngay + dang that su ngoai
+// show 'active' trung ngay, chua tra ve). excludeRentalId: bo qua chinh show dang sua.
+async function checkAvailability(assetGroup, category, brand, model, startDateTime, endDateTime, excludeRentalId) {
+  const key = modelKey(assetGroup, category, brand, model);
+  const allAssets = await listAssets();
+  const total = allAssets.filter(a => modelKey(a.asset_group, a.category, a.brand, a.model) === key).length;
+
+  const start = new Date(startDateTime), end = new Date(endDateTime);
+  const { data: rentals, error: rErr } = await sb.from('rentals').select('id, status, start_datetime, end_datetime').in('status', ['reserved', 'active']);
+  if (rErr) throw rErr;
+  const overlapping = rentals.filter(r => r.id !== excludeRentalId && rangesOverlap(start, end, new Date(r.start_datetime), new Date(r.end_datetime)));
+  const reservedIds = overlapping.filter(r => r.status === 'reserved').map(r => r.id);
+  const activeIds = overlapping.filter(r => r.status === 'active').map(r => r.id);
+
+  let held = 0;
+  if (reservedIds.length) {
+    const { data: resItems, error } = await sb.from('reservation_items').select('quantity, asset_group, category, brand, model').in('rental_id', reservedIds);
+    if (error) throw error;
+    held += resItems.filter(i => modelKey(i.asset_group, i.category, i.brand, i.model) === key).reduce((s, i) => s + i.quantity, 0);
+  }
+  if (activeIds.length) {
+    const { data: items, error } = await sb.from('rental_items').select('scanned_in_at, assets(asset_group, category, brand, model)').in('rental_id', activeIds).is('scanned_in_at', null);
+    if (error) throw error;
+    held += items.filter(i => i.assets && modelKey(i.assets.asset_group, i.assets.category, i.assets.brand, i.assets.model) === key).length;
+  }
+  return { total, held, available: Math.max(0, total - held) };
+}
+
 // ---------- EXCEL (.xlsx) — dung thu vien xlsx-js-style (nap qua CDN, bien global XLSX) ----------
 
 function xlsxBorderThin() {
