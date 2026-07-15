@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thiết bị liên công ty - Quản trị hệ thống</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1c6dd0">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rental APP">
+<script src="/js/pwa.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🛠️ Quản trị hệ thống (Superadmin)</div>
+  <nav class="tabs">
+    <a href="/admin/index.html">Công ty &amp; Thanh toán</a>
+    <a href="/admin/thiet-bi.html" class="active">Thiết bị liên công ty</a>
+  </nav>
+  <button class="secondary" onclick="logout()">Đăng xuất</button>
+</header>
+<main>
+  <div class="card">
+    <h1 style="margin-bottom:4px">Danh mục thiết bị liên công ty</h1>
+    <p class="muted" style="margin-top:0">Tìm nhanh công ty nào đang có sẵn thiết bị để hỗ trợ thuê chéo giữa các đơn vị. Chỉ Superadmin xem được trang này.</p>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label>Tìm kiếm</label>
+        <input id="searchBox" placeholder="Tên công ty, nhóm, nhãn hiệu, model...">
+      </div>
+      <div>
+        <label>Trạng thái</label>
+        <select id="statusFilter">
+          <option value="">Tất cả trạng thái</option>
+          <option value="available">Có sẵn</option>
+          <option value="reserved">Đang giữ chỗ</option>
+          <option value="rented">Đang cho thuê</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid" id="stats"></div>
+
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Công ty</th><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model</th>
+            <th class="center">Tổng</th><th class="center">Đang thuê</th><th class="center">Đang giữ chỗ</th><th class="center">Còn trống</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty-state" style="display:none">Không tìm thấy thiết bị phù hợp.</div>
+  </div>
+
+  <div class="card" id="detailCard" style="display:none">
+    <div class="flex between">
+      <h2 id="detailTitle"></h2>
+      <button class="secondary" id="closeDetail">Đóng</button>
+    </div>
+    <p class="muted" id="detailMeta"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mã QR</th><th>Trạng thái</th></tr></thead>
+        <tbody id="detailBody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
+<script>
+let ME = null;
+let CATALOG = [];
+
+function statusLabel(s) {
+  return { available: 'Có sẵn', reserved: 'Đang giữ chỗ', rented: 'Đang cho thuê' }[s] || s;
+}
+
+async function init() {
+  const profile = await requireLogin();
+  if (!profile) return;
+  if (profile.role !== 'superadmin') {
+    toast('Không có quyền truy cập', 'error');
+    setTimeout(() => location.href = '/index.html', 1000);
+    return;
+  }
+  ME = profile;
+  try {
+    CATALOG = await getCrossCompanyCatalog(profile);
+    render();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function render() {
+  const q = document.getElementById('searchBox').value.trim().toLowerCase();
+  const statusF = document.getElementById('statusFilter').value;
+
+  let rows = CATALOG.filter(g => {
+    if (q) {
+      const hay = [g.companyName, g.assetGroup, g.category, g.brand, g.model].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (statusF === 'available' && g.available <= 0) return false;
+    if (statusF === 'reserved' && g.reserved <= 0) return false;
+    if (statusF === 'rented' && g.rented <= 0) return false;
+    return true;
+  });
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${CATALOG.length}</div><div class="label">Số model (tất cả công ty)</div></div>
+    <div class="stat"><div class="num">${CATALOG.reduce((s, g) => s + g.total, 0)}</div><div class="label">Tổng số thiết bị</div></div>
+    <div class="stat"><div class="num">${CATALOG.reduce((s, g) => s + g.available, 0)}</div><div class="label">Đang có sẵn (toàn hệ thống)</div></div>
+  `;
+
+  document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('tbody').innerHTML = rows.map((g, i) => `
+    <tr>
+      <td>${esc(g.companyName)}</td>
+      <td>${esc([g.assetGroup, g.category].filter(Boolean).join(' / ') || '—')}</td>
+      <td>${esc(g.brand || '—')}</td>
+      <td>${esc(g.model)}</td>
+      <td class="center">${g.total}</td>
+      <td class="center">${g.rented || '—'}</td>
+      <td class="center">${g.reserved || '—'}</td>
+      <td class="center" style="font-weight:700;color:${g.available > 0 ? 'var(--success)' : 'var(--muted)'}">${g.available}</td>
+      <td><button class="secondary" style="padding:5px 10px;font-size:12.5px" data-detail="${esc(g.companyId + '||' + modelKey(g.assetGroup, g.category, g.brand, g.model))}">Chi tiết</button></td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('button[data-detail]').forEach(btn => {
+    btn.addEventListener('click', () => showDetail(btn.dataset.detail));
+  });
+}
+
+function showDetail(key) {
+  const g = CATALOG.find(x => (x.companyId + '||' + modelKey(x.assetGroup, x.category, x.brand, x.model)) === key);
+  if (!g) return;
+  document.getElementById('detailCard').style.display = '';
+  document.getElementById('detailTitle').textContent = g.companyName + ' — ' + g.model;
+  document.getElementById('detailMeta').textContent =
+    `${[g.assetGroup, g.category, g.brand].filter(Boolean).join(' / ')} · Tổng ${g.total} · Đang thuê ${g.rented} · Đang giữ chỗ ${g.reserved} (theo model, chưa gán máy cụ thể) · Còn trống ${g.available}`;
+  document.getElementById('detailBody').innerHTML = g.units.map(u => `
+    <tr>
+      <td class="mono">${esc(u.qrCode)}</td>
+      <td><span class="badge ${u.status}">${statusLabel(u.status)}</span></td>
+    </tr>
+  `).join('') || '<tr><td colspan="2" class="muted center">Không có thiết bị nào</td></tr>';
+  document.getElementById('detailCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+document.getElementById('closeDetail').addEventListener('click', () => {
+  document.getElementById('detailCard').style.display = 'none';
+});
+document.getElementById('searchBox').addEventListener('input', render);
+document.getElementById('statusFilter').addEventListener('change', render);
+
+init();
+</script>
+</body>
+</html>
