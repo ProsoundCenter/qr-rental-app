@@ -353,6 +353,58 @@ async function checkAvailability(assetGroup, category, brand, model, startDateTi
   return { total, held, available: Math.max(0, total - held) };
 }
 
+// ---------- DANH MUC THIET BI LIEN CONG TY (chi Superadmin) ----------
+// Gop tat ca assets + reservation_items (dang giu cho) cua MOI cong ty theo model,
+// de Superadmin tim nhanh cong ty nao con hang trong khi thue cheo giua 2 don vi.
+// RLS da cho phep is_superadmin() doc toan bo assets/rentals/reservation_items
+// (xem supabase_migration_0002.sql, 0003.sql) nen khong can migration moi.
+async function getCrossCompanyCatalog(profile) {
+  if (!profile || profile.role !== 'superadmin') throw new Error('Chỉ Superadmin mới xem được danh mục liên công ty');
+
+  const { data: companies, error: cErr } = await sb.from('companies').select('id, name');
+  if (cErr) throw cErr;
+  const companyName = {};
+  companies.forEach(c => { companyName[c.id] = c.name; });
+
+  const { data: assets, error: aErr } = await sb.from('assets')
+    .select('id, company_id, asset_group, category, brand, model, status, qr_code');
+  if (aErr) throw aErr;
+
+  const { data: resItems, error: rErr } = await sb.from('reservation_items')
+    .select('company_id, asset_group, category, brand, model, quantity, rentals(status)');
+  if (rErr) throw rErr;
+
+  const groups = {};
+  function ensure(companyId, assetGroup, category, brand, model) {
+    const key = companyId + '||' + modelKey(assetGroup, category, brand, model);
+    if (!groups[key]) {
+      groups[key] = {
+        companyId, companyName: companyName[companyId] || '—',
+        assetGroup: assetGroup || '', category: category || '', brand: brand || '', model: model || '',
+        total: 0, rented: 0, reserved: 0, units: []
+      };
+    }
+    return groups[key];
+  }
+
+  assets.forEach(a => {
+    const g = ensure(a.company_id, a.asset_group, a.category, a.brand, a.model);
+    g.total++;
+    if (a.status === 'rented') g.rented++;
+    g.units.push({ qrCode: a.qr_code, status: a.status });
+  });
+
+  resItems.forEach(ri => {
+    if (!ri.rentals || ri.rentals.status !== 'reserved') return;
+    const g = ensure(ri.company_id, ri.asset_group, ri.category, ri.brand, ri.model);
+    g.reserved += ri.quantity;
+  });
+
+  return Object.values(groups)
+    .map(g => Object.assign(g, { available: Math.max(0, g.total - g.rented - g.reserved) }))
+    .sort((x, y) => (x.companyName + x.model).localeCompare(y.companyName + y.model, 'vi'));
+}
+
 // ---------- EXCEL (.xlsx) — dung thu vien xlsx-js-style (nap qua CDN, bien global XLSX) ----------
 
 function xlsxBorderThin() {
