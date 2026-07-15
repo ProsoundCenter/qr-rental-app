@@ -71,12 +71,14 @@ function renderNav(activeHref, profile) {
       <nav class="tabs">${links}</nav>
       <div class="flex" style="gap:8px">
         <span class="role-badge">${roleLabel}</span>
+        <button class="secondary" id="installAppBtn" style="display:none;padding:6px 12px;font-size:13px">📲 Cài app</button>
         <button class="secondary" id="logoutBtn" style="padding:6px 12px;font-size:13px">Đăng xuất</button>
       </div>
     </header>
   `;
   const btn = document.getElementById('logoutBtn');
   if (btn) btn.addEventListener('click', logout);
+  if (typeof attachInstallButton === 'function') attachInstallButton('installAppBtn');
 }
 
 // Chan operator truy cap thang cac trang chi danh cho Admin (nhap-kho, tem, staff...).
