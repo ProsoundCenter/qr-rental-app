@@ -91,47 +91,102 @@ function requireAdmin(profile) {
   return true;
 }
 
-// Gan thanh truot zoom camera ngay duoi khung quet #reader (neu thiet bi/trinh duyet ho tro).
-// Goi lai moi lan camera (re)start thanh cong, vi kha nang zoom co the khac nhau giua cac camera.
-// Mac dinh zoom nhe (~35% khoang cho phep) de de quet tem QR nho ngoai thuc te hon so voi mac dinh 1x.
+// Gan thanh dieu khien camera (zoom + den flash + lay net) ngay duoi khung quet #reader,
+// tuy theo thiet bi/trinh duyet ho tro tinh nang nao thi hien tinh nang do (thuong chi
+// hoat dong day du tren Android Chrome; iPhone Safari phan lon khong ho tro torch/zoom/
+// focus qua web nen se tu an cac nut khong dung duoc, khong bao loi cho nguoi dung).
+// Goi lai moi lan camera (re)start thanh cong, vi kha nang thiet bi co the khac nhau.
 function attachZoomControl(scanner) {
   try {
     const caps = scanner.getRunningTrackCameraCapabilities && scanner.getRunningTrackCameraCapabilities();
-    const zoom = caps && caps.zoomFeature && caps.zoomFeature();
     const reader = document.getElementById('reader');
     let box = document.getElementById('zoomControl');
-    if (!zoom || !zoom.isSupported || !zoom.isSupported()) {
+
+    const zoom = caps && caps.zoomFeature && caps.zoomFeature();
+    const zoomOk = zoom && zoom.isSupported && zoom.isSupported();
+    const torch = caps && caps.torchFeature && caps.torchFeature();
+    const torchOk = torch && torch.isSupported && torch.isSupported();
+    const focusMode = caps && caps.focusModeFeature && caps.focusModeFeature();
+    const focusOk = focusMode && focusMode.isSupported && focusMode.isSupported();
+
+    if (!zoomOk && !torchOk && !focusOk) {
       if (box) box.remove();
       return;
     }
-    const min = zoom.min(), max = zoom.max(), step = zoom.step() || 0.1;
     if (!box) {
       box = document.createElement('div');
       box.id = 'zoomControl';
-      box.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:8px';
+      box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:8px';
       reader.insertAdjacentElement('afterend', box);
     }
     box.innerHTML = `
-      <span class="muted" style="font-size:12.5px;white-space:nowrap">🔍 Zoom</span>
-      <button type="button" class="secondary" id="zoomOutBtn" style="padding:4px 10px">−</button>
-      <input type="range" id="zoomSlider" min="${min}" max="${max}" step="${step}" style="flex:1">
-      <button type="button" class="secondary" id="zoomInBtn" style="padding:4px 10px">+</button>
-      <span class="mono" id="zoomVal" style="min-width:36px;text-align:right;font-size:12.5px"></span>
+      ${zoomOk ? `<div style="display:flex;align-items:center;gap:8px">
+        <span class="muted" style="font-size:12.5px;white-space:nowrap">🔍 Zoom</span>
+        <button type="button" class="secondary" id="zoomOutBtn" style="padding:4px 10px">−</button>
+        <input type="range" id="zoomSlider" style="flex:1">
+        <button type="button" class="secondary" id="zoomInBtn" style="padding:4px 10px">+</button>
+        <span class="mono" id="zoomVal" style="min-width:36px;text-align:right;font-size:12.5px"></span>
+      </div>` : ''}
+      ${(torchOk || focusOk) ? `<div style="display:flex;gap:8px">
+        ${torchOk ? `<button type="button" class="secondary" id="torchBtn" style="flex:1;padding:7px 10px;font-size:13px">🔦 Bật đèn</button>` : ''}
+        ${focusOk ? `<button type="button" class="secondary" id="focusBtn" style="flex:1;padding:7px 10px;font-size:13px">🎯 Lấy nét</button>` : ''}
+      </div>` : ''}
     `;
-    const slider = document.getElementById('zoomSlider');
-    const valEl = document.getElementById('zoomVal');
-    const apply = (v) => {
-      v = Math.min(max, Math.max(min, Number(v)));
-      slider.value = v;
-      zoom.apply(v);
-      valEl.textContent = v.toFixed(1) + 'x';
-    };
-    const startVal = min + (max - min) * 0.35;
-    apply(startVal);
-    slider.addEventListener('input', () => apply(slider.value));
-    document.getElementById('zoomOutBtn').addEventListener('click', () => apply(Number(slider.value) - step * 5));
-    document.getElementById('zoomInBtn').addEventListener('click', () => apply(Number(slider.value) + step * 5));
+
+    // ---- Zoom (nhu cu, mac dinh 35% khoang cho phep de de quet tem nho) ----
+    if (zoomOk) {
+      const min = zoom.min(), max = zoom.max(), step = zoom.step() || 0.1;
+      const slider = document.getElementById('zoomSlider');
+      slider.min = min; slider.max = max; slider.step = step;
+      const valEl = document.getElementById('zoomVal');
+      const apply = (v) => {
+        v = Math.min(max, Math.max(min, Number(v)));
+        slider.value = v;
+        zoom.apply(v);
+        valEl.textContent = v.toFixed(1) + 'x';
+      };
+      apply(min + (max - min) * 0.35);
+      slider.addEventListener('input', () => apply(slider.value));
+      document.getElementById('zoomOutBtn').addEventListener('click', () => apply(Number(slider.value) - step * 5));
+      document.getElementById('zoomInBtn').addEventListener('click', () => apply(Number(slider.value) + step * 5));
+    }
+
+    // ---- Den flash (torch) - bat/tat de quet trong dieu kien thieu sang ----
+    if (torchOk) {
+      let torchOn = false;
+      const torchBtn = document.getElementById('torchBtn');
+      torchBtn.addEventListener('click', () => {
+        torchOn = !torchOn;
+        try {
+          torch.apply(torchOn);
+          torchBtn.textContent = torchOn ? '🔦 Tắt đèn' : '🔦 Bật đèn';
+          torchBtn.classList.toggle('active-torch', torchOn);
+          torchBtn.style.background = torchOn ? 'var(--warn)' : '';
+          torchBtn.style.color = torchOn ? '#fff' : '';
+          torchBtn.style.borderColor = torchOn ? 'var(--warn)' : '';
+        } catch (e) {
+          toast('Thiết bị này không bật được đèn qua trình duyệt', 'error');
+        }
+      });
+    }
+
+    // ---- Lay net (focus) - bat lay net lien tuc mac dinh, co nut lay net lai thu cong ----
+    if (focusOk) {
+      try { focusMode.apply('continuous'); } catch (e) { /* mac dinh cua camera */ }
+      const focusBtn = document.getElementById('focusBtn');
+      focusBtn.addEventListener('click', () => {
+        // Meo pho bien: tat rồi bat lai che do lay net de camera quet lay net mot lan nua.
+        try {
+          focusMode.apply('single-shot');
+          setTimeout(() => { try { focusMode.apply('continuous'); } catch (e) {} }, 400);
+          focusBtn.textContent = '🎯 Đang lấy nét...';
+          setTimeout(() => { focusBtn.textContent = '🎯 Lấy nét'; }, 600);
+        } catch (e) {
+          toast('Thiết bị này không hỗ trợ lấy nét thủ công qua trình duyệt', 'error');
+        }
+      });
+    }
   } catch (e) {
-    // Camera/trinh duyet khong ho tro zoom -> bo qua, van dung ban Zoom-1x mac dinh.
+    // Camera/trinh duyet khong ho tro cac tinh nang nay -> bo qua, van quet binh thuong.
   }
 }
