@@ -190,3 +190,80 @@ function attachZoomControl(scanner) {
     // Camera/trinh duyet khong ho tro cac tinh nang nay -> bo qua, van quet binh thuong.
   }
 }
+
+// Thu lan luot cac camera "sau" (nhieu dien thoai co 2-3 ong kinh sau: chinh, goc rong, tele...)
+// va chon ong kinh DAU TIEN co ho tro den flash (torch), thay vi luon lay ong kinh dau tien
+// theo nhan camera - vi mot so may liet ke ong kinh phu (khong co den) truoc ong kinh chinh,
+// khien nguoi dung phai tu bam "Doi camera" moi thay nut Bat den. Neu khong ong kinh sau nao
+// co torch (vd iPhone), dung lai o ong kinh dau tien nhu binh thuong.
+// Tra ve index (trong mang cameraList) cua camera da duoc chon va bat thanh cong.
+async function startBestBackCamera(scanner, cameraList, startOptions, onScan) {
+  const backCandidates = (cameraList || [])
+    .map((c, i) => ({ i, label: c.label || '' }))
+    .filter(c => /back|rear|environment|sau/i.test(c.label))
+    .map(c => c.i);
+  const order = backCandidates.length ? backCandidates : [Math.max(0, (cameraList || []).length - 1)];
+
+  let lastErr = null;
+  for (let k = 0; k < order.length; k++) {
+    const idx = order[k];
+    const target = cameraList[idx] ? cameraList[idx].id : { facingMode: 'environment' };
+    try {
+      await scanner.start(target, startOptions, onScan, () => {});
+      let torchOk = false;
+      try {
+        const caps = scanner.getRunningTrackCameraCapabilities && scanner.getRunningTrackCameraCapabilities();
+        const torch = caps && caps.torchFeature && caps.torchFeature();
+        torchOk = !!(torch && torch.isSupported && torch.isSupported());
+      } catch (e) { /* khong doc duoc capability -> coi nhu khong co torch, thu ong kinh khac */ }
+      if (torchOk || k === order.length - 1) return idx;
+      try { await scanner.stop(); } catch (e) {}
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  return order[order.length - 1];
+}
+
+// Chi tu dong focus (bat ban phim ao) vao o nhap ma tren thiet bi KHONG cam ung — vi muc dich
+// ban dau la ho tro may quet ma vach VAT LY gan qua USB/Bluetooth (go nhu ban phim that) tai
+// quay may tinh de ban. Tren dien thoai/may tinh bang (co cam ung), tu dong focus se lam ban
+// phim ao tu bat len khi vua vao trang dung camera quet, gay vuong man hinh khong can thiet —
+// nen chi focus khi nguoi dung TU cham tay vao o nhap.
+function focusScanInputIfDesktop(el) {
+  if (!el) return;
+  const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
+  if (!isTouch) el.focus();
+}
+
+// Phat tieng "bip" bao da quet duoc / quet loi, giong may quet ma vach o quay tinh tien
+// sieu thi — dung Web Audio API de tao am thanh ngay, khong can tai file am thanh ngoai.
+let _scanAudioCtx = null;
+function playScanBeep(success) {
+  try {
+    if (!_scanAudioCtx) _scanAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _scanAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    if (success) {
+      osc.frequency.setValueAtTime(1568, now);
+      gain.gain.setValueAtTime(0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.13);
+    } else {
+      osc.frequency.setValueAtTime(220, now);
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.start(now);
+      osc.stop(now + 0.23);
+    }
+  } catch (e) {
+    // Trinh duyet khong ho tro Web Audio hoac chua duoc phep phat am -> bo qua, van con rung + mau bao.
+  }
+}
