@@ -13,7 +13,10 @@
 <main>
   <div class="flex between">
     <h1>Lịch sử xuất kho theo show</h1>
-    <a href="/xuat-kho.html" class="btn">+ Xuất kho / Quét QR</a>
+    <div class="flex">
+      <a href="/giu-cho.html" class="btn secondary" id="giuChoLink" style="display:none">+ Giữ chỗ trước</a>
+      <a href="/xuat-kho.html" class="btn">+ Xuất kho / Quét QR</a>
+    </div>
   </div>
 
   <div class="card" id="listCard">
@@ -34,13 +37,16 @@
       <h2 id="detailTitle"></h2>
       <div class="flex">
         <a id="exportLink" href="#" class="btn secondary">📊 Xuất Excel (biên bản)</a>
+        <button id="confirmResBtn" class="success" style="display:none">Xác nhận thuê (chốt đơn)</button>
+        <button id="cancelResBtn" class="danger" style="display:none">Huỷ giữ chỗ</button>
         <button class="secondary" id="closeDetail">Đóng</button>
       </div>
     </div>
     <p class="muted" id="detailMeta"></p>
+    <div id="reservedNote" class="muted" style="display:none;margin-bottom:10px;font-size:13px">Đây là dòng giữ chỗ theo model + số lượng, chưa gán máy cụ thể và chưa xuất kho. Khi khách chốt, bấm "Xác nhận thuê" rồi qua Xuất kho quét mã QR như bình thường.</div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr></thead>
+        <thead id="detailHead"><tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr></thead>
         <tbody id="detailBody"></tbody>
       </table>
     </div>
@@ -78,35 +84,80 @@ async function load() {
 }
 
 function statusLabel(s) {
-  return { active: 'Đang mở', closed: 'Đã đóng', returned: 'Đã trả kho' }[s] || s;
+  return { active: 'Đang mở', closed: 'Đã đóng', returned: 'Đã trả kho', reserved: 'Giữ chỗ', cancelled: 'Đã huỷ' }[s] || s;
 }
+
+let currentDetailRental = null;
 
 async function viewDetail(id) {
   const r = await getRental(id);
-  const items = await getRentalItems(id);
+  currentDetailRental = r;
+  const isReserved = r.status === 'reserved';
   document.getElementById('detailCard').style.display = '';
   document.getElementById('detailTitle').textContent = r.code + ' — ' + r.show_name;
   document.getElementById('detailMeta').textContent =
     `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.start_datetime)} → ${fmtDate(r.end_datetime)} · Trạng thái: ${statusLabel(r.status)}`;
-  document.getElementById('detailDepHeader').style.display = isAdmin(profile) ? '' : 'none';
-  document.getElementById('detailBody').innerHTML = items.map(i => {
-    const a = i.assets || {};
-    return `
-    <tr>
-      <td class="mono">${esc(a.qr_code)}</td>
-      <td>${esc(a.asset_group)} / ${esc(a.category)}</td>
-      <td>${esc(a.brand)} ${esc(a.model)}</td>
-      <td>${a.depreciation_type === 'show' ? 'Theo show' : 'Theo tháng'}</td>
-      ${isAdmin(profile) ? `<td class="right">${money(i.deduction_value)}</td>` : ''}
-      <td>${fmtDate(i.scanned_out_at)}</td>
-      <td>${i.scanned_in_at ? fmtDate(i.scanned_in_at) : '<span class="muted">Chưa về</span>'}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="muted center">Chưa có thiết bị</td></tr>';
-  document.getElementById('detailTotalWrap').style.display = isAdmin(profile) ? '' : 'none';
-  document.getElementById('detailTotal').textContent = money(r.total_depreciation_value);
+  document.getElementById('reservedNote').style.display = isReserved ? '' : 'none';
+  document.getElementById('exportLink').style.display = isReserved ? 'none' : '';
+  document.getElementById('confirmResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
+  document.getElementById('cancelResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
+  document.getElementById('detailTotalWrap').style.display = (isAdmin(profile) && !isReserved) ? '' : 'none';
+
+  if (isReserved) {
+    document.getElementById('detailHead').innerHTML = '<tr><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model</th><th class="center">Số lượng giữ</th></tr>';
+    const lines = await getReservationItems(id);
+    document.getElementById('detailBody').innerHTML = lines.map(l => `
+      <tr>
+        <td>${esc([l.asset_group, l.category].filter(Boolean).join(' / ') || '—')}</td>
+        <td>${esc(l.brand || '—')}</td>
+        <td>${esc(l.model)}</td>
+        <td class="center">${l.quantity}</td>
+      </tr>`).join('') || '<tr><td colspan="4" class="muted center">Chưa có dòng giữ chỗ</td></tr>';
+  } else {
+    document.getElementById('detailHead').innerHTML = '<tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr>';
+    const items = await getRentalItems(id);
+    document.getElementById('detailDepHeader').style.display = isAdmin(profile) ? '' : 'none';
+    document.getElementById('detailBody').innerHTML = items.map(i => {
+      const a = i.assets || {};
+      return `
+      <tr>
+        <td class="mono">${esc(a.qr_code)}</td>
+        <td>${esc(a.asset_group)} / ${esc(a.category)}</td>
+        <td>${esc(a.brand)} ${esc(a.model)}</td>
+        <td>${a.depreciation_type === 'show' ? 'Theo show' : 'Theo tháng'}</td>
+        ${isAdmin(profile) ? `<td class="right">${money(i.deduction_value)}</td>` : ''}
+        <td>${fmtDate(i.scanned_out_at)}</td>
+        <td>${i.scanned_in_at ? fmtDate(i.scanned_in_at) : '<span class="muted">Chưa về</span>'}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted center">Chưa có thiết bị</td></tr>';
+    document.getElementById('detailTotal').textContent = money(r.total_depreciation_value);
+  }
+
   document.getElementById('exportLink').onclick = async (e) => { e.preventDefault(); try { await downloadRentalXlsx(profile, r); } catch (err) { toast(err.message, 'error'); } };
   document.getElementById('detailCard').scrollIntoView({ behavior: 'smooth' });
 }
+
+document.getElementById('confirmResBtn').addEventListener('click', async () => {
+  if (!currentDetailRental) return;
+  if (!confirm('Xác nhận thuê? Show sẽ chuyển sang "Đang mở" để quét xuất kho thật.')) return;
+  try {
+    await confirmReservation(currentDetailRental.id);
+    toast('Đã xác nhận thuê, vào Xuất kho để quét mã QR', 'success');
+    document.getElementById('detailCard').style.display = 'none';
+    await load();
+  } catch (err) { toast(err.message, 'error'); }
+});
+
+document.getElementById('cancelResBtn').addEventListener('click', async () => {
+  if (!currentDetailRental) return;
+  if (!confirm('Huỷ giữ chỗ này? Thiết bị sẽ được giải phóng khỏi lịch giữ chỗ.')) return;
+  try {
+    await cancelReservation(currentDetailRental.id);
+    toast('Đã huỷ giữ chỗ', 'success');
+    document.getElementById('detailCard').style.display = 'none';
+    await load();
+  } catch (err) { toast(err.message, 'error'); }
+});
 
 document.getElementById('closeDetail').addEventListener('click', () => {
   document.getElementById('detailCard').style.display = 'none';
@@ -116,6 +167,7 @@ async function init() {
   profile = await requireLogin();
   if (!profile) return;
   renderNav('/lich-su.html', profile);
+  document.getElementById('giuChoLink').style.display = isAdmin(profile) ? '' : 'none';
   await load();
 }
 

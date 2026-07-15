@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Giữ chỗ - Rental APP</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <div class="flex between">
+    <h1>Giữ chỗ thiết bị</h1>
+    <a href="/lich-su.html" class="btn secondary">Xem danh sách giữ chỗ &rarr;</a>
+  </div>
+  <p class="muted">Dùng khi khách mới hỏi show nhưng chưa chốt: giữ trước số lượng thiết bị theo model, không cần biết chính xác máy nào và không cần quét mã QR. Khi khách chốt, vào mục Lịch sử để "Xác nhận thuê" rồi quét xuất kho như bình thường.</p>
+
+  <form id="form" class="card">
+    <h2>1. Thông tin show</h2>
+    <div class="row">
+      <div><label>Tên show *</label><input name="showName" required></div>
+      <div><label>Khách hàng</label><input name="customer"></div>
+      <div style="grid-column:1/-1"><label>Địa điểm</label><input name="location"></div>
+      <div><label>Từ ngày giờ *</label><input type="datetime-local" name="startDateTime" required></div>
+      <div><label>Đến ngày giờ *</label><input type="datetime-local" name="endDateTime" required></div>
+    </div>
+
+    <h2 style="margin-top:6px">2. Thiết bị cần giữ chỗ</h2>
+    <div id="linesWrap"></div>
+    <button type="button" class="secondary" id="addLineBtn" style="margin-top:8px">+ Thêm dòng thiết bị</button>
+
+    <div class="flex" style="margin-top:16px">
+      <button type="submit">Tạo giữ chỗ</button>
+    </div>
+  </form>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
+<script>
+let profile = null;
+let ALL_ASSETS = [];
+let lineSeq = 0;
+
+function fillDatalist(id, values) {
+  const uniq = [...new Set(values.map(v => (v || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+  document.getElementById(id).innerHTML = uniq.map(v => `<option value="${esc(v)}">`).join('');
+}
+
+function addLine() {
+  const n = lineSeq++;
+  const wrap = document.getElementById('linesWrap');
+  const row = document.createElement('div');
+  row.className = 'card';
+  row.style.cssText = 'background:var(--bg);margin-bottom:10px;padding:14px';
+  row.dataset.line = n;
+  row.innerHTML = `
+    <div class="row" style="margin-bottom:0">
+      <div><label>Nhóm</label><input data-f="asset_group" list="groupList-${n}" autocomplete="off"><datalist id="groupList-${n}"></datalist></div>
+      <div><label>Chủng loại</label><input data-f="category" list="categoryList-${n}" autocomplete="off"><datalist id="categoryList-${n}"></datalist></div>
+      <div><label>Nhãn hiệu</label><input data-f="brand" list="brandList-${n}" autocomplete="off"><datalist id="brandList-${n}"></datalist></div>
+      <div><label>Model *</label><input data-f="model" list="modelList-${n}" autocomplete="off" required><datalist id="modelList-${n}"></datalist></div>
+      <div><label>Số lượng cần giữ *</label><input data-f="quantity" type="number" min="1" step="1" value="1" required></div>
+      <div style="display:flex;align-items:flex-end;gap:8px">
+        <button type="button" class="secondary" data-check style="flex:1">Kiểm tra khả dụng</button>
+        <button type="button" class="danger" data-remove style="padding:9px 12px">Xoá</button>
+      </div>
+    </div>
+    <div class="muted" data-avail style="font-size:12.5px;margin-top:6px"></div>
+  `;
+  wrap.appendChild(row);
+  fillDatalist('groupList-' + n, ALL_ASSETS.map(a => a.asset_group));
+  fillDatalist('categoryList-' + n, ALL_ASSETS.map(a => a.category));
+  fillDatalist('brandList-' + n, ALL_ASSETS.map(a => a.brand));
+  fillDatalist('modelList-' + n, ALL_ASSETS.map(a => a.model));
+
+  row.querySelector('[data-remove]').addEventListener('click', () => row.remove());
+  row.querySelector('[data-check]').addEventListener('click', () => checkLine(row));
+}
+
+async function checkLine(row) {
+  const get = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
+  const model = get('model');
+  const qty = Number(get('quantity')) || 0;
+  const avail = row.querySelector('[data-avail]');
+  const start = document.querySelector('[name="startDateTime"]').value;
+  const end = document.querySelector('[name="endDateTime"]').value;
+  if (!model) { toast('Nhập Model trước đã', 'error'); return; }
+  if (!start || !end) { toast('Chọn thời gian show trước đã', 'error'); return; }
+  avail.textContent = 'Đang kiểm tra...';
+  try {
+    const r = await checkAvailability(get('asset_group'), get('category'), get('brand'), model, start, end);
+    const ok = r.available >= qty;
+    avail.innerHTML = `Tổng kho: <strong>${r.total}</strong> · Đang bận (thuê/giữ chỗ trùng ngày): <strong>${r.held}</strong> · Còn trống: <strong style="color:${ok ? 'var(--success)' : 'var(--danger)'}">${r.available}</strong>${ok ? '' : ' — không đủ so với số lượng yêu cầu!'}`;
+  } catch (e) {
+    avail.textContent = '';
+    toast(e.message, 'error');
+  }
+}
+
+document.getElementById('addLineBtn').addEventListener('click', addLine);
+
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const lines = [...document.querySelectorAll('#linesWrap [data-line]')].map(row => {
+    const get = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
+    return {
+      asset_group: get('asset_group'), category: get('category'), brand: get('brand'),
+      model: get('model'), quantity: Number(get('quantity')) || 0
+    };
+  });
+  const btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  try {
+    const rental = await createReservation(profile, body, lines);
+    toast('Đã tạo giữ chỗ ' + rental.code, 'success');
+    setTimeout(() => location.href = '/lich-su.html', 700);
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+  }
+});
+
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  if (!requireAdmin(profile)) return;
+  renderNav('/giu-cho.html', profile);
+  ALL_ASSETS = await listAssets();
+  addLine();
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>
