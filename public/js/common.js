@@ -32,6 +32,7 @@ const ADMIN_NAV = [
   { href: '/tem.html', label: 'In tem QR' },
   { href: '/xuat-kho.html', label: 'Xuất kho' },
   { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
+  { href: '/kiem-kho.html', label: 'Kiểm kho' },
   { href: '/giu-cho.html', label: 'Giữ chỗ' },
   { href: '/lich-su.html', label: 'Lịch sử' },
   { href: '/staff.html', label: 'Nhân viên' },
@@ -41,6 +42,7 @@ const ADMIN_NAV = [
 const OPERATOR_NAV = [
   { href: '/xuat-kho.html', label: 'Xuất kho' },
   { href: '/nhap-kho-ve.html', label: 'Nhập kho về' },
+  { href: '/kiem-kho.html', label: 'Kiểm kho' },
   { href: '/lich-su.html', label: 'Lịch sử' }
 ];
 
@@ -201,19 +203,40 @@ function attachZoomControl(scanner) {
 // khien nguoi dung phai tu bam "Doi camera" moi thay nut Bat den. Neu khong ong kinh sau nao
 // co torch (vd iPhone), dung lai o ong kinh dau tien nhu binh thuong.
 // Tra ve index (trong mang cameraList) cua camera da duoc chon va bat thanh cong.
+function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Thu goi scanner.start(), neu bi loi "dang trong qua trinh chuyen trang thai" (hay gap khi
+// stop() truoc do chua kip giai phong camera xong ma da goi start() ngay) thi doi 1 chut roi
+// thu lai 1 lan, thay vi bao loi luon - day la nguyen nhan pho bien gay "camera bi loi" tren
+// mot so dien thoai Android sau khi doi ong kinh lien tuc.
+async function _startWithRetry(scanner, target, startOptions, onScan) {
+  try {
+    await scanner.start(target, startOptions, onScan, () => {});
+  } catch (e) {
+    const msg = String((e && e.message) || e || '');
+    if (/transition|already|in progress/i.test(msg)) {
+      await _sleep(350);
+      await scanner.start(target, startOptions, onScan, () => {});
+    } else {
+      throw e;
+    }
+  }
+}
+
 async function startBestBackCamera(scanner, cameraList, startOptions, onScan) {
   const backCandidates = (cameraList || [])
     .map((c, i) => ({ i, label: c.label || '' }))
     .filter(c => /back|rear|environment|sau/i.test(c.label))
     .map(c => c.i);
-  const order = backCandidates.length ? backCandidates : [Math.max(0, (cameraList || []).length - 1)];
+  let order = backCandidates.length ? backCandidates : [Math.max(0, (cameraList || []).length - 1)];
+  if (order.length > 3) order = order.slice(0, 3); // gioi han so lan doi ong kinh tranh cycling qua nhieu tren may co 4+ camera sau
 
   let lastErr = null;
   for (let k = 0; k < order.length; k++) {
     const idx = order[k];
     const target = cameraList[idx] ? cameraList[idx].id : { facingMode: 'environment' };
     try {
-      await scanner.start(target, startOptions, onScan, () => {});
+      await _startWithRetry(scanner, target, startOptions, onScan);
       let torchOk = false;
       try {
         const caps = scanner.getRunningTrackCameraCapabilities && scanner.getRunningTrackCameraCapabilities();
@@ -222,8 +245,11 @@ async function startBestBackCamera(scanner, cameraList, startOptions, onScan) {
       } catch (e) { /* khong doc duoc capability -> coi nhu khong co torch, thu ong kinh khac */ }
       if (torchOk || k === order.length - 1) return idx;
       try { await scanner.stop(); } catch (e) {}
+      await _sleep(250); // cho camera vua stop giai phong hoan toan truoc khi mo ong kinh khac
     } catch (e) {
       lastErr = e;
+      try { await scanner.stop(); } catch (e2) {}
+      await _sleep(250);
     }
   }
   if (lastErr) throw lastErr;

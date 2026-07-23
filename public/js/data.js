@@ -1,10 +1,22 @@
 // data.js - lop truy cap du lieu qua Supabase (thay the server.js / db.js cu).
 // Yeu cau da nap truoc: supabaseClient.js, common.js.
 
+// Tim ma tiep theo CHUA tung dung, dua tren ma lon nhat thuc te dang co (khong dua vao
+// dem so dong) - vi tai san co the bi xoa hoac duoc sua tay thanh 1 ma bat ky, khien
+// logic "dem+1" cu bi trung voi ma da ton tai.
 async function nextCode(companyId, table, prefix) {
-  const { count, error } = await sb.from(table).select('id', { count: 'exact', head: true }).eq('company_id', companyId);
+  const col = table === 'assets' ? 'qr_code' : 'code';
+  const { data, error } = await sb.from(table).select(col).eq('company_id', companyId).like(col, prefix + '%');
   if (error) throw error;
-  return prefix + String((count || 0) + 1).padStart(5, '0');
+  let max = 0;
+  (data || []).forEach(row => {
+    const val = row[col] || '';
+    if (val.startsWith(prefix)) {
+      const n = parseInt(val.slice(prefix.length), 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+  });
+  return prefix + String(max + 1).padStart(5, '0');
 }
 
 function unitDepreciation(importValue, period) {
@@ -36,11 +48,10 @@ async function createAsset(profile, b) {
   if (!b.asset_group || !b.model) throw new Error('Thiếu Nhóm sản phẩm hoặc Model');
   const importValue = Number(b.import_value) || 0;
   const period = Number(b.depreciation_period) || 0;
-  let qrCode = (b.qr_code && String(b.qr_code).trim()) || null;
-  if (!qrCode) qrCode = await nextCode(profile.company_id, 'assets', 'TS-');
-  const row = {
+  const manualCode = (b.qr_code && String(b.qr_code).trim()) || null;
+
+  const baseRow = {
     company_id: profile.company_id,
-    qr_code: qrCode,
     asset_group: b.asset_group || '',
     category: b.category || '',
     brand: b.brand || '',
@@ -54,12 +65,41 @@ async function createAsset(profile, b) {
     status: 'available',
     created_by: profile.id
   };
-  const { data, error } = await sb.from('assets').insert(row).select().single();
-  if (error) {
-    if (String(error.code) === '23505') throw new Error('Mã QR này đã tồn tại, vui lòng chọn mã khác');
+
+  if (manualCode) {
+    const { data, error } = await sb.from('assets').insert({ ...baseRow, qr_code: manualCode }).select().single();
+    if (error) {
+      if (String(error.code) === '23505') throw new Error('Mã QR này đã tồn tại, vui lòng chọn mã khác');
+      throw error;
+    }
+    return data;
+  }
+
+  // Ma tu sinh: thu toi 8 lan phong khi 2 nguoi cung nhap kho cung luc bi trung ma.
+  let lastErr = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const qrCode = await nextCode(profile.company_id, 'assets', 'TS-');
+    const { data, error } = await sb.from('assets').insert({ ...baseRow, qr_code: qrCode }).select().single();
+    if (!error) return data;
+    if (String(error.code) === '23505') { lastErr = error; continue; }
     throw error;
   }
-  return data;
+  throw new Error('Không tạo được mã QR tự động, vui lòng thử lại');
+}
+
+// Kiem kho: tra ve day du nguon goc + lich su cho thue cua 1 tai san theo ma QR, phuc
+// vu kiem tra thuc te trong kho (khong lam thay doi du lieu gi).
+async function getAssetHistory(code) {
+  const asset = await getAssetByCode(code);
+  if (!asset) return null;
+  const { data: history, error } = await sb
+    .from('rental_items')
+    .select('*, rentals(code, show_name, customer, status)')
+    .eq('asset_id', asset.id)
+    .order('scanned_out_at', { ascending: false });
+  if (error) throw error;
+  const remaining = round2(Number(asset.import_value) - Number(asset.total_depreciated || 0));
+  return { asset, history: history || [], remaining };
 }
 
 async function updateAsset(id, b) {
@@ -137,6 +177,38 @@ async function createRental(profile, b) {
 async function closeRental(id) {
   const { error } = await sb.from('rentals').update({ status: 'closed' }).eq('id', id);
   if (error) throw error;
+}
+
+// Mo lai 1 show da "dong" (vd bam dong nham, hoac show thuc te phat sinh them thiet bi
+// sau khi da dong) - dua ve 'active' de tiep tuc quet xuat kho binh thuong.
+async function reopenRental(id) {
+  const { error } = await sb.from('rentals').update({ status: 'active' }).eq('id', id);
+  if (error) throw error;
+}
+
+// Xoa han 1 show (do lam nham/lam nhap) - chi Admin duoc goi (chan o UI). Hoan tac
+// toan bo anh huong cua tung thiet bi da quet trong show nay (nhu chua tung xuat kho),
+// roi xoa cac dong rental_items/reservation_items va chinh dong rentals.
+async function deleteRental(rentalId) {
+  const { data: items, error: itemsErr } = await sb.from('rental_items').select('*').eq('rental_id', rentalId);
+  if (itemsErr) throw itemsErr;
+  for (const item of (items || [])) {
+    const asset = await getAsset(item.asset_id).catch(() => null);
+    if (asset) {
+      const { error: assetErr } = await sb.from('assets').update({
+        rental_count: Math.max(0, (asset.rental_count || 0) - 1),
+        total_depreciated: round2(Math.max(0, Number(asset.total_depreciated || 0) - Number(item.deduction_value || 0))),
+        status: 'available'
+      }).eq('id', item.asset_id);
+      if (assetErr) throw assetErr;
+    }
+  }
+  const { error: delItemsErr } = await sb.from('rental_items').delete().eq('rental_id', rentalId);
+  if (delItemsErr) throw delItemsErr;
+  const { error: delResErr } = await sb.from('reservation_items').delete().eq('rental_id', rentalId);
+  if (delResErr) throw delResErr;
+  const { error: delRentalErr } = await sb.from('rentals').delete().eq('id', rentalId);
+  if (delRentalErr) throw delRentalErr;
 }
 
 // Quet xuat kho: 1 ma QR -> 1 dong rental_items, tru khau hao, danh dau asset dang cho thue.
