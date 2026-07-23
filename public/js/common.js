@@ -297,3 +297,55 @@ function playScanBeep(success) {
     // Trinh duyet khong ho tro Web Audio hoac chua duoc phep phat am -> bo qua, van con rung + mau bao.
   }
 }
+
+// Gan nut "Ket noi dau doc RFID" ngay sau phan tu co id = afterElId (thuong la khung
+// camera #reader), dung song song voi camera QR va nhap tay - KHONG thay the. Chi hien
+// nut neu trinh duyet ho tro Web Serial (Chrome/Edge tren may tinh; hau het dien thoai/
+// Safari khong ho tro nen se tu an, khong bao loi). onScan(epc) duoc goi moi lan doc
+// duoc 1 the, dung chung ham xu ly voi camera/nhap tay (vd addCode/lookup).
+function attachRfidButton(afterElId, onScan) {
+  if (typeof rfidIsSupported !== 'function' || !rfidIsSupported()) return null;
+  const afterEl = document.getElementById(afterElId);
+  if (!afterEl) return null;
+
+  const box = document.createElement('div');
+  box.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  box.innerHTML = `
+    <button type="button" class="secondary" id="rfidBtn_${afterElId}" style="padding:7px 12px;font-size:13px">🔌 Kết nối đầu đọc RFID</button>
+    <span class="muted" id="rfidStatus_${afterElId}" style="font-size:12.5px">Chưa kết nối</span>
+  `;
+  afterEl.insertAdjacentElement('afterend', box);
+
+  const btn = box.querySelector(`#rfidBtn_${afterElId}`);
+  const statusEl = box.querySelector(`#rfidStatus_${afterElId}`);
+  let reader = null;
+  let connected = false;
+
+  btn.addEventListener('click', async () => {
+    if (connected) {
+      btn.disabled = true;
+      try { await reader.stopInventory(); await reader.disconnect(); } catch (e) {}
+      connected = false;
+      btn.disabled = false;
+      btn.textContent = '🔌 Kết nối đầu đọc RFID';
+      statusEl.textContent = 'Đã ngắt kết nối';
+      return;
+    }
+    btn.disabled = true;
+    statusEl.textContent = 'Đang kết nối... (chọn cổng USB của đầu đọc trong hộp thoại trình duyệt)';
+    try {
+      reader = createNRNReader();
+      await reader.connect();
+      await reader.startInventory([1], (tag) => { if (tag && tag.epc) onScan(tag.epc); });
+      connected = true;
+      btn.textContent = '🔌 Ngắt kết nối RFID';
+      statusEl.textContent = '✓ Đã kết nối, đang quét liên tục...';
+    } catch (e) {
+      statusEl.textContent = 'Lỗi: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  return { getConnected: () => connected };
+}
