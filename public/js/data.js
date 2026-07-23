@@ -207,8 +207,14 @@ async function deleteRental(rentalId) {
   if (delItemsErr) throw delItemsErr;
   const { error: delResErr } = await sb.from('reservation_items').delete().eq('rental_id', rentalId);
   if (delResErr) throw delResErr;
-  const { error: delRentalErr } = await sb.from('rentals').delete().eq('id', rentalId);
+  // Dung .select() de biet chac chan co dong nao thuc su bi xoa - neu RLS chan xoa,
+  // Supabase tra ve thanh cong voi 0 dong bi anh huong (khong bao loi), nen phai tu
+  // kiem tra o day de khong bao "Da xoa" nham trong khi du lieu van con nguyen.
+  const { data: delRentalData, error: delRentalErr } = await sb.from('rentals').delete().eq('id', rentalId).select();
   if (delRentalErr) throw delRentalErr;
+  if (!delRentalData || !delRentalData.length) {
+    throw new Error('Không xoá được show này (có thể do không đủ quyền). Vui lòng thử lại hoặc liên hệ hỗ trợ.');
+  }
 }
 
 // Quet xuat kho: 1 ma QR -> 1 dong rental_items, tru khau hao, danh dau asset dang cho thue.
