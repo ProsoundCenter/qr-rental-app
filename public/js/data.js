@@ -337,15 +337,43 @@ function rangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-// Tao 1 "show giu cho": 1 dong rentals (status='reserved', ma GC-xxxxx) + nhieu dong
-// reservation_items (model + so luong). Khong dung toi assets cu the.
+// Chuan hoa 1 dong nhap tu form Bao gia thanh dong luu DB - line.item_type = 'asset'
+// (thiet bi theo model + so luong + von uoc tinh/don vi) hoac 'cost' (dong chi phi
+// phat sinh nhu van chuyen/nhan cong/ky su, chi co nhan + so tien).
+function normalizeQuoteLine(l, companyId, profileId) {
+  const isCost = l.item_type === 'cost';
+  return {
+    company_id: companyId,
+    item_type: isCost ? 'cost' : 'asset',
+    asset_group: isCost ? '' : (l.asset_group || ''),
+    category: isCost ? '' : (l.category || ''),
+    brand: isCost ? '' : (l.brand || ''),
+    model: isCost ? (l.cost_label || 'Chi phí') : l.model,
+    quantity: isCost ? 1 : Number(l.quantity),
+    unit_cost: isCost ? 0 : (Number(l.unit_cost) || 0),
+    cost_label: isCost ? (l.cost_label || '') : null,
+    amount: isCost ? (Number(l.amount) || 0) : 0,
+    created_by: profileId
+  };
+}
+
+function cleanQuoteLines(lines) {
+  return (lines || []).filter(l => l.item_type === 'cost'
+    ? (l.cost_label && Number(l.amount) >= 0)
+    : (l.model && Number(l.quantity) > 0));
+}
+
+// Tao 1 "bao gia" (giu cho + bao gia): 1 dong rentals (status='reserved', ma GC-xxxxx)
+// + nhieu dong reservation_items (thiet bi theo model+von, hoac dong chi phi). Chua
+// gan may cu the - khi khach chot don, goi confirmReservation() de chuyen thanh show
+// that (status 'active') va quet QR nhu binh thuong.
 async function createReservation(profile, b, lines) {
-  if (!isAdmin(profile)) throw new Error('Chỉ Quản trị mới tạo được giữ chỗ');
+  if (!isAdmin(profile)) throw new Error('Chỉ Quản trị mới tạo được báo giá');
   if (!b.showName || !b.startDateTime || !b.endDateTime) {
     throw new Error('Thiếu Tên show, thời gian bắt đầu hoặc kết thúc');
   }
-  const cleanLines = (lines || []).filter(l => l.model && Number(l.quantity) > 0);
-  if (!cleanLines.length) throw new Error('Cần thêm ít nhất 1 dòng thiết bị cần giữ chỗ (model + số lượng)');
+  const cleanLines = cleanQuoteLines(lines);
+  if (!cleanLines.length) throw new Error('Cần thêm ít nhất 1 dòng thiết bị hoặc chi phí');
 
   const code = await nextCode(profile.company_id, 'rentals', 'GC-');
   const row = {
@@ -357,30 +385,63 @@ async function createReservation(profile, b, lines) {
     start_datetime: b.startDateTime,
     end_datetime: b.endDateTime,
     status: 'reserved',
+    sale_price: (b.salePrice !== undefined && b.salePrice !== null && b.salePrice !== '') ? Number(b.salePrice) : null,
+    quote_note: b.quoteNote || '',
     created_by: profile.id
   };
   const { data: rental, error } = await sb.from('rentals').insert(row).select().single();
   if (error) throw error;
 
-  const itemRows = cleanLines.map(l => ({
-    company_id: profile.company_id,
-    rental_id: rental.id,
-    asset_group: l.asset_group || '',
-    category: l.category || '',
-    brand: l.brand || '',
-    model: l.model,
-    quantity: Number(l.quantity),
-    created_by: profile.id
-  }));
+  const itemRows = cleanLines.map(l => normalizeQuoteLine(l, profile.company_id, profile.id));
   const { error: itemErr } = await sb.from('reservation_items').insert(itemRows);
   if (itemErr) throw itemErr;
   return rental;
+}
+
+// Cap nhat bao gia con dang o trang thai 'reserved' (chua chot don): sua thong tin show,
+// gia ban thuong luong, ghi chu, va thay toan bo danh sach dong (xoa het roi chen lai -
+// an toan vi bao gia chua chot thi chua co lien quan gi den thiet bi/khau hao thuc te).
+async function updateReservation(rentalId, profile, b, lines) {
+  const cleanLines = cleanQuoteLines(lines);
+  if (!cleanLines.length) throw new Error('Cần thêm ít nhất 1 dòng thiết bị hoặc chi phí');
+
+  const row = {
+    show_name: b.showName,
+    customer: b.customer || '',
+    location: b.location || '',
+    start_datetime: b.startDateTime,
+    end_datetime: b.endDateTime,
+    sale_price: (b.salePrice !== undefined && b.salePrice !== null && b.salePrice !== '') ? Number(b.salePrice) : null,
+    quote_note: b.quoteNote || ''
+  };
+  const { error: updErr } = await sb.from('rentals').update(row).eq('id', rentalId);
+  if (updErr) throw updErr;
+
+  const { error: delErr } = await sb.from('reservation_items').delete().eq('rental_id', rentalId);
+  if (delErr) throw delErr;
+  const itemRows = cleanLines.map(l => ({ ...normalizeQuoteLine(l, profile.company_id, profile.id), rental_id: rentalId }));
+  const { error: insErr } = await sb.from('reservation_items').insert(itemRows);
+  if (insErr) throw insErr;
 }
 
 async function getReservationItems(rentalId) {
   const { data, error } = await sb.from('reservation_items').select('*').eq('rental_id', rentalId).order('created_at', { ascending: true });
   if (error) throw error;
   return data;
+}
+
+// Tinh tong von (thiet bi) + chi phi phat sinh + giá bán + loi nhuan du kien cua 1 bao gia,
+// phuc vu hien thi cho Admin xem truoc khi chot don voi khach.
+async function getQuoteSummary(rentalId, salePrice) {
+  const lines = await getReservationItems(rentalId);
+  const assetLines = lines.filter(l => l.item_type !== 'cost');
+  const costLines = lines.filter(l => l.item_type === 'cost');
+  const assetCost = round2(assetLines.reduce((s, l) => s + Number(l.unit_cost || 0) * Number(l.quantity || 0), 0));
+  const extraCost = round2(costLines.reduce((s, l) => s + Number(l.amount || 0), 0));
+  const totalCost = round2(assetCost + extraCost);
+  const price = Number(salePrice) || 0;
+  const profit = round2(price - totalCost);
+  return { assetLines, costLines, assetCost, extraCost, totalCost, profit };
 }
 
 // "Chot don": chuyen giu cho -> show that su (status 'active'), tu do xuat hien binh
