@@ -53,6 +53,7 @@
 <script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
 <script src="/js/data.js"></script>
+<script src="/js/rfid.js"></script>
 <script>
 let profile = null;
 let sessionItems = [];
@@ -170,6 +171,7 @@ async function init() {
   renderList();
   startScanner();
   focusScanInputIfDesktop(document.getElementById('manualCode'));
+  if (typeof attachRfidButton === 'function') attachRfidButton('reader', (epc) => addCode(epc));
 }
 
 init().catch(e => toast(e.message, 'error'));

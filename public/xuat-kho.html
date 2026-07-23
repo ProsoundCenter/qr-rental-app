@@ -87,6 +87,7 @@
 <script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
 <script src="/js/data.js"></script>
+<script src="/js/rfid.js"></script>
 <script>
 let profile = null;
 let currentRental = null;
@@ -136,6 +137,9 @@ async function openRental(id) {
   renderRental();
   startScanner();
   focusScanInputIfDesktop(document.getElementById('manualCode'));
+  if (typeof attachRfidButton === 'function' && !document.getElementById('rfidBtn_reader')) {
+    attachRfidButton('reader', (epc) => addCode(epc));
+  }
 }
 
 function renderRental() {

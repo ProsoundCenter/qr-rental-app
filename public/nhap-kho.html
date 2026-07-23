@@ -108,11 +108,15 @@
       </div>
     </div>
 
-    <h2>4. Mã QR (có thể sửa)</h2>
+    <h2>4. Mã QR / Mã thẻ RFID (có thể sửa)</h2>
     <div class="row">
       <div>
-        <label>Mã ngắn dán lên QR (để trống sẽ tự sinh mã)</label>
-        <input name="qr_code" id="qrCodeInput" placeholder="VD: TS-00001" class="mono">
+        <label>Mã ngắn dán lên QR, hoặc mã thẻ RFID (để trống sẽ tự sinh mã QR)</label>
+        <div class="flex" style="gap:8px">
+          <input name="qr_code" id="qrCodeInput" placeholder="VD: TS-00001" class="mono" style="flex:1">
+          <button type="button" class="secondary" id="rfidScanOnceBtn" style="display:none;white-space:nowrap;padding:9px 12px">📡 Quét thẻ RFID</button>
+        </div>
+        <div class="muted" id="rfidOnceStatus" style="font-size:12px;margin-top:4px"></div>
       </div>
       <div>
         <label>Xem trước QR</label>
@@ -135,6 +139,7 @@
 <script src="/js/supabaseClient.js"></script>
 <script src="/js/common.js"></script>
 <script src="/js/data.js"></script>
+<script src="/js/rfid.js"></script>
 <script>
 let profile = null;
 const params = new URLSearchParams(location.search);
@@ -215,6 +220,36 @@ form.import_value.addEventListener('input', updateUnitPreview);
 form.depreciation_period.addEventListener('input', updateUnitPreview);
 form.depreciation_type.addEventListener('change', updatePeriodLabel);
 document.getElementById('qrCodeInput').addEventListener('input', updateQrPreview);
+
+// Quet 1 lan de lay ma EPC cua the RFID va dien vao o ma - danh cho tai san gan the
+// RFID (co san mot ma co dinh tu nha san xuat) thay vi go tay hoac de app tu sinh ma QR.
+// Doc xong 1 the la tu dong dung quet + ngat ket noi (khong quet lien tuc nhu trang xuat kho).
+if (typeof rfidIsSupported === 'function' && rfidIsSupported()) {
+  const rfidBtn = document.getElementById('rfidScanOnceBtn');
+  const rfidStatus = document.getElementById('rfidOnceStatus');
+  rfidBtn.style.display = '';
+  rfidBtn.addEventListener('click', async () => {
+    rfidBtn.disabled = true;
+    rfidStatus.textContent = 'Đang kết nối... (chọn cổng USB của đầu đọc trong hộp thoại trình duyệt)';
+    let reader = null;
+    try {
+      reader = createNRNReader();
+      await reader.connect();
+      rfidStatus.textContent = 'Đã kết nối — đưa thẻ RFID lại gần đầu đọc...';
+      await reader.startInventory([1], async (tag) => {
+        if (!tag || !tag.epc) return;
+        document.getElementById('qrCodeInput').value = tag.epc;
+        updateQrPreview();
+        rfidStatus.textContent = '✓ Đã lấy mã từ thẻ: ' + tag.epc;
+        try { await reader.stopInventory(); await reader.disconnect(); } catch (e) {}
+        rfidBtn.disabled = false;
+      });
+    } catch (e) {
+      rfidStatus.textContent = 'Lỗi: ' + e.message;
+      rfidBtn.disabled = false;
+    }
+  });
+}
 
 async function loadExisting() {
   if (!assetId) { updateQrPreview(); return; }
