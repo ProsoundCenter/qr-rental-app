@@ -46,6 +46,8 @@
         <a id="exportLink" href="#" class="btn secondary">📊 Xuất Excel (biên bản)</a>
         <button id="confirmResBtn" class="success" style="display:none">Xác nhận thuê (chốt đơn)</button>
         <button id="cancelResBtn" class="danger" style="display:none">Huỷ giữ chỗ</button>
+        <button id="reopenBtn" class="secondary" style="display:none">↺ Mở lại show</button>
+        <button id="deleteRentalBtn" class="danger" style="display:none">🗑️ Xoá show</button>
         <button class="secondary" id="closeDetail">Đóng</button>
       </div>
     </div>
@@ -109,6 +111,8 @@ async function viewDetail(id) {
   document.getElementById('confirmResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
   document.getElementById('cancelResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
   document.getElementById('detailTotalWrap').style.display = (isAdmin(profile) && !isReserved) ? '' : 'none';
+  document.getElementById('reopenBtn').style.display = (r.status === 'closed' && isAdmin(profile)) ? '' : 'none';
+  document.getElementById('deleteRentalBtn').style.display = isAdmin(profile) ? '' : 'none';
 
   if (isReserved) {
     document.getElementById('detailHead').innerHTML = '<tr><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model</th><th class="center">Số lượng giữ</th></tr>';
@@ -168,6 +172,29 @@ document.getElementById('cancelResBtn').addEventListener('click', async () => {
 
 document.getElementById('closeDetail').addEventListener('click', () => {
   document.getElementById('detailCard').style.display = 'none';
+});
+
+document.getElementById('reopenBtn').addEventListener('click', async () => {
+  if (!currentDetailRental) return;
+  if (!confirm('Mở lại show này để tiếp tục quét xuất kho?')) return;
+  try {
+    await reopenRental(currentDetailRental.id);
+    toast('Đã mở lại show', 'success');
+    document.getElementById('detailCard').style.display = 'none';
+    await load();
+  } catch (err) { toast(err.message, 'error'); }
+});
+
+document.getElementById('deleteRentalBtn').addEventListener('click', async () => {
+  if (!currentDetailRental) return;
+  const r = currentDetailRental;
+  if (!confirm(`Xoá vĩnh viễn show ${r.code} — ${r.show_name}?\nToàn bộ thiết bị đã quét trong show này sẽ được hoàn tác (như chưa từng xuất kho). Không thể hoàn tác thao tác này.`)) return;
+  try {
+    await deleteRental(r.id);
+    toast('Đã xoá show', 'success');
+    document.getElementById('detailCard').style.display = 'none';
+    await load();
+  } catch (err) { toast(err.message, 'error'); }
 });
 
 async function init() {

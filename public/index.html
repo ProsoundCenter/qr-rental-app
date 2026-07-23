@@ -48,9 +48,9 @@
       <table>
         <thead>
           <tr>
-            <th>Mã QR</th><th>Nhóm</th><th>Chủng loại</th><th>Nhãn hiệu</th><th>Model</th>
-            <th class="right">Giá trị nhập</th><th class="right">Khấu hao/đơn vị</th>
-            <th class="center">Số lần thuê</th><th class="right">Giá trị còn lại</th><th>Trạng thái</th><th></th>
+            <th>Mã QR</th><th>Trạng thái</th><th>Model</th><th>Nhãn hiệu</th><th>Chủng loại</th><th>Nhóm</th>
+            <th class="right">Khấu hao/đơn vị</th><th class="right">Giá trị nhập</th>
+            <th class="right">Giá trị còn lại</th><th class="center">Số lần thuê</th><th></th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -131,15 +131,15 @@ function renderTable(list) {
     return `
     <tr>
       <td class="mono">${esc(a.qr_code)}</td>
-      <td>${esc(a.asset_group)}</td>
-      <td>${esc(a.category)}</td>
-      <td>${esc(a.brand)}</td>
-      <td>${esc(a.model)}</td>
-      <td class="right">${money(a.import_value)}</td>
-      <td class="right">${money(unit)}/${a.depreciation_type === 'show' ? 'show' : 'tháng'}</td>
-      <td class="center">${a.rental_count || 0}</td>
-      <td class="right">${money(remaining)}</td>
       <td><span class="badge ${a.status}">${a.status === 'rented' ? 'Đang thuê' : 'Sẵn sàng'}</span></td>
+      <td>${esc(a.model)}</td>
+      <td>${esc(a.brand)}</td>
+      <td>${esc(a.category)}</td>
+      <td>${esc(a.asset_group)}</td>
+      <td class="right">${money(unit)}/${a.depreciation_type === 'show' ? 'show' : 'tháng'}</td>
+      <td class="right">${money(a.import_value)}</td>
+      <td class="right">${money(remaining)}</td>
+      <td class="center">${a.rental_count || 0}</td>
       <td><a href="/nhap-kho.html?id=${a.id}" class="btn secondary" style="padding:5px 10px;font-size:12.5px">Sửa</a></td>
     </tr>
   `;

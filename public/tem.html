@@ -74,7 +74,11 @@
   <div class="card no-print">
     <div class="row">
       <div>
-        <label>Chọn tài sản</label>
+        <label>Tìm tài sản (mã QR, nhãn hiệu, model, nhóm, chủng loại...)</label>
+        <input id="assetSearch" placeholder="Gõ để tìm..." autocomplete="off">
+      </div>
+      <div>
+        <label>Chọn tài sản <span class="muted" id="matchCount" style="font-weight:400"></span></label>
         <select id="assetSelect"></select>
       </div>
       <div>
@@ -143,12 +147,16 @@ async function init() {
 
   assets = await listAssets();
   const sel = document.getElementById('assetSelect');
-  sel.innerHTML = assets.map(a => `<option value="${a.id}">${esc(a.qr_code)} — ${esc(a.model)}</option>`).join('');
   const preselect = params.get('id');
-  if (preselect && assets.find(a => a.id === preselect)) sel.value = preselect;
+  renderAssetOptions('', preselect);
   currentAsset = assets.find(a => a.id === sel.value) || assets[0];
   sel.addEventListener('change', () => {
     currentAsset = assets.find(a => a.id === sel.value);
+    render();
+  });
+  document.getElementById('assetSearch').addEventListener('input', (e) => {
+    renderAssetOptions(e.target.value);
+    currentAsset = assets.find(a => a.id === sel.value) || null;
     render();
   });
   document.getElementById('sizeSelect').addEventListener('change', () => { applySizeDefaults(); render(); });
@@ -157,6 +165,24 @@ async function init() {
   });
   document.getElementById('printBtn').addEventListener('click', () => window.print());
   render();
+}
+
+// Loc danh sach tai san theo tu khoa (khop bat ky truong nao: ma QR cu/moi, nhan hieu,
+// model, nhom, chung loai, mo ta) roi ve lai <select> - phuc vu tim thiet bi de in lai
+// tem khi kho co qua nhieu san pham.
+function renderAssetOptions(query, preselectId) {
+  const sel = document.getElementById('assetSelect');
+  const q = (query || '').trim().toLowerCase();
+  const filtered = !q ? assets : assets.filter(a => [
+    a.qr_code, a.brand, a.model, a.asset_group, a.category, a.description
+  ].some(v => (v || '').toLowerCase().includes(q)));
+
+  document.getElementById('matchCount').textContent = q ? `(${filtered.length} kết quả)` : '';
+  sel.innerHTML = filtered.length
+    ? filtered.map(a => `<option value="${a.id}">${esc(a.qr_code)} — ${esc(a.brand)} ${esc(a.model)}</option>`).join('')
+    : '<option value="">— Không tìm thấy —</option>';
+
+  if (preselectId && filtered.find(a => a.id === preselectId)) sel.value = preselectId;
 }
 
 // Goi y so cot/hang mac dinh theo kich thuoc tem, nguoi dung nen chinh lai cho khop

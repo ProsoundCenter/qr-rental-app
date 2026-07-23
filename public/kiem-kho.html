@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiểm kho - QR Rental Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1c6dd0">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rental APP">
+<script src="/js/pwa.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div id="nav-container"></div>
+<main>
+  <h1>Kiểm kho — Tra cứu nguồn gốc &amp; lịch sử thiết bị</h1>
+  <p class="muted">Quét mã QR của thiết bị đang có trong kho để xem đầy đủ thông tin nhập kho, giá trị còn lại và lịch sử từng lần cho thuê — phục vụ kiểm kê thực tế.</p>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="flex between">
+          <h3>Quét bằng camera</h3>
+          <button type="button" class="secondary" id="switchCamBtn" style="display:none;padding:5px 10px;font-size:12.5px">🔄 Đổi camera</button>
+        </div>
+        <div id="reader"></div>
+      </div>
+      <div>
+        <h3>Hoặc nhập / quét bằng máy quét mã vạch (bàn phím)</h3>
+        <form id="manualForm">
+          <input id="manualCode" class="scan-input" placeholder="Quét hoặc gõ mã QR rồi Enter" autocomplete="off">
+        </form>
+        <div id="flash" class="scan-flash" style="margin-top:10px">Sẵn sàng quét...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <div class="flex between">
+      <h2 id="resTitle"></h2>
+      <span class="badge" id="resStatusBadge"></span>
+    </div>
+    <div class="grid" id="resStats" style="margin-top:6px"></div>
+
+    <h3 style="margin-top:16px">Thông tin nhập kho</h3>
+    <table>
+      <tbody id="infoBody"></tbody>
+    </table>
+
+    <h3 style="margin-top:16px">Lịch sử cho thuê (mới nhất trên đầu)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Show</th><th>Khách hàng</th><th class="right" id="depCol">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="notFoundCard" class="card" style="display:none">
+    <div class="empty-state" id="notFoundMsg"></div>
+  </div>
+</main>
+
+<script src="/js/config.js"></script>
+<script src="/js/supabaseClient.js"></script>
+<script src="/js/common.js"></script>
+<script src="/js/data.js"></script>
+<script>
+let profile = null;
+let scanner = null;
+let lastScan = { code: null, time: 0 };
+let busy = false;
+
+function flash(msg, ok) {
+  const el = document.getElementById('flash');
+  el.textContent = msg;
+  el.className = 'scan-flash ' + (ok ? 'ok' : 'err');
+  clearTimeout(flash._t);
+  flash._t = setTimeout(() => { el.textContent = 'Sẵn sàng quét...'; el.className = 'scan-flash'; }, 1400);
+}
+
+async function lookup(code) {
+  code = (code || '').trim();
+  if (!code || busy) return;
+  const now = Date.now();
+  if (lastScan.code === code && now - lastScan.time < 1500) return;
+  lastScan = { code, time: now };
+  busy = true;
+  try {
+    const result = await getAssetHistory(code);
+    document.getElementById('notFoundCard').style.display = 'none';
+    if (!result) {
+      document.getElementById('resultCard').style.display = 'none';
+      document.getElementById('notFoundCard').style.display = '';
+      document.getElementById('notFoundMsg').textContent = `Không tìm thấy thiết bị với mã QR: ${code}`;
+      flash('✗ Không tìm thấy: ' + code, false);
+      playScanBeep(false);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      return;
+    }
+    renderResult(result);
+    flash('✓ Đã tìm thấy: ' + result.asset.qr_code, true);
+    playScanBeep(true);
+    if (navigator.vibrate) navigator.vibrate(70);
+  } catch (err) {
+    flash('✗ ' + err.message, false);
+    playScanBeep(false);
+  } finally {
+    busy = false;
+  }
+}
+
+function renderResult({ asset: a, history, remaining }) {
+  const admin = isAdmin(profile);
+  document.getElementById('resultCard').style.display = '';
+  document.getElementById('resTitle').textContent = `${a.qr_code} — ${[a.brand, a.model].filter(Boolean).join(' ')}`;
+  const badge = document.getElementById('resStatusBadge');
+  badge.className = 'badge ' + a.status;
+  badge.textContent = a.status === 'rented' ? 'Đang cho thuê' : 'Sẵn sàng trong kho';
+
+  const rentedCount = history.filter(h => h.scanned_in_at).length + history.filter(h => !h.scanned_in_at).length;
+  document.getElementById('resStats').innerHTML = admin ? `
+    <div class="stat"><div class="num">${money(a.import_value)}</div><div class="label">Giá trị nhập</div></div>
+    <div class="stat"><div class="num">${money(a.total_depreciated || 0)}</div><div class="label">Đã khấu hao</div></div>
+    <div class="stat"><div class="num">${money(remaining)}</div><div class="label">Giá trị còn lại</div></div>
+    <div class="stat"><div class="num">${a.rental_count || 0}</div><div class="label">Số lần đã cho thuê</div></div>
+  ` : `
+    <div class="stat"><div class="num">${a.rental_count || 0}</div><div class="label">Số lần đã cho thuê</div></div>
+  `;
+
+  document.getElementById('infoBody').innerHTML = `
+    <tr><td class="muted">Nhóm / Chủng loại</td><td>${esc([a.asset_group, a.category].filter(Boolean).join(' / ') || '—')}</td></tr>
+    <tr><td class="muted">Nhãn hiệu / Model</td><td>${esc([a.brand, a.model].filter(Boolean).join(' / ') || '—')}</td></tr>
+    <tr><td class="muted">Ngày nhập kho</td><td>${a.import_date ? fmtDate(a.import_date) : '—'}</td></tr>
+    <tr><td class="muted">Ngày sản xuất</td><td>${a.manufacture_date ? fmtDate(a.manufacture_date) : '—'}</td></tr>
+    <tr><td class="muted">Kiểu khấu hao</td><td>${a.depreciation_type === 'show' ? 'Theo show (' + a.depreciation_period + ' show)' : 'Theo tháng (' + a.depreciation_period + ' tháng)'}</td></tr>
+    <tr><td class="muted">Mô tả</td><td>${esc(a.description || '—')}</td></tr>
+  `;
+
+  document.getElementById('depCol').style.display = admin ? '' : 'none';
+  document.getElementById('historyBody').innerHTML = history.map(h => {
+    const r = h.rentals || {};
+    return `
+    <tr>
+      <td class="mono">${esc(r.code)} — ${esc(r.show_name)}</td>
+      <td>${esc(r.customer || '—')}</td>
+      ${admin ? `<td class="right">${money(h.deduction_value)}</td>` : ''}
+      <td>${fmtDate(h.scanned_out_at)}</td>
+      <td>${h.scanned_in_at ? fmtDate(h.scanned_in_at) : '<span class="muted">Chưa về</span>'}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="${admin ? 5 : 4}" class="muted center">Chưa từng cho thuê lần nào</td></tr>`;
+}
+
+document.getElementById('manualForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = document.getElementById('manualCode');
+  lookup(input.value);
+  input.value = '';
+  focusScanInputIfDesktop(input);
+});
+
+let availableCameras = [];
+let currentCameraIndex = 0;
+
+async function startScanner() {
+  if (typeof Html5Qrcode === 'undefined') {
+    document.getElementById('reader').innerHTML = '<p class="muted">Không tải được thư viện quét camera. Dùng ô nhập mã bên cạnh.</p>';
+    return;
+  }
+  scanner = new Html5Qrcode('reader');
+  try { availableCameras = await Html5Qrcode.getCameras(); } catch (e) { availableCameras = []; }
+  document.getElementById('switchCamBtn').style.display = availableCameras.length > 1 ? '' : 'none';
+  try {
+    currentCameraIndex = await startBestBackCamera(scanner, availableCameras, { fps: 10, qrbox: 220 }, (decodedText) => lookup(decodedText));
+    attachZoomControl(scanner);
+  } catch (e) {
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => lookup(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
+  }
+}
+
+async function runCamera() {
+  const target = availableCameras[currentCameraIndex] ? availableCameras[currentCameraIndex].id : { facingMode: 'environment' };
+  try {
+    await scanner.start(target, { fps: 10, qrbox: 220 }, (decodedText) => lookup(decodedText), () => {});
+    attachZoomControl(scanner);
+  } catch (e) {
+    try {
+      await scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, (decodedText) => lookup(decodedText), () => {});
+      attachZoomControl(scanner);
+    }
+    catch (e2) { document.getElementById('reader').innerHTML = '<p class="muted">Không mở được camera. Dùng ô nhập mã bên cạnh.</p>'; }
+  }
+}
+
+document.getElementById('switchCamBtn').addEventListener('click', async () => {
+  if (!scanner || availableCameras.length < 2) return;
+  try { await scanner.stop(); } catch (e) {}
+  currentCameraIndex = (currentCameraIndex + 1) % availableCameras.length;
+  await runCamera();
+});
+
+async function init() {
+  profile = await requireLogin();
+  if (!profile) return;
+  renderNav('/kiem-kho.html', profile);
+  startScanner();
+  focusScanInputIfDesktop(document.getElementById('manualCode'));
+}
+
+init().catch(e => toast(e.message, 'error'));
+</script>
+</body>
+</html>
