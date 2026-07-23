@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Giữ chỗ - Rental APP</title>
+<title>Báo giá - Rental APP</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#1c6dd0">
@@ -18,10 +18,10 @@
 <div id="nav-container"></div>
 <main>
   <div class="flex between">
-    <h1>Giữ chỗ thiết bị</h1>
-    <a href="/lich-su.html" class="btn secondary">Xem danh sách giữ chỗ &rarr;</a>
+    <h1 id="pageTitle">Tạo báo giá</h1>
+    <a href="/lich-su.html" class="btn secondary">Xem danh sách báo giá &rarr;</a>
   </div>
-  <p class="muted">Dùng khi khách mới hỏi show nhưng chưa chốt: giữ trước số lượng thiết bị theo model, không cần biết chính xác máy nào và không cần quét mã QR. Khi khách chốt, vào mục Lịch sử để "Xác nhận thuê" rồi quét xuất kho như bình thường.</p>
+  <p class="muted">Dùng khi khách mới hỏi show, đang thương lượng giá: giữ trước số lượng thiết bị theo model kèm vốn ước tính, cộng thêm chi phí phát sinh (vận chuyển, nhân công, kỹ sư...) và nhập giá bán thương lượng. Chưa cần biết chính xác máy nào, chưa quét mã QR. Khi khách chốt đơn, vào mục Lịch sử để "Xác nhận thuê" — show thật sẽ mở ra để quét xuất kho như bình thường.</p>
 
   <form id="form" class="card">
     <h2>1. Thông tin show</h2>
@@ -33,12 +33,31 @@
       <div><label>Đến ngày giờ *</label><input type="datetime-local" name="endDateTime" required></div>
     </div>
 
-    <h2 style="margin-top:6px">2. Thiết bị cần giữ chỗ</h2>
-    <div id="linesWrap"></div>
-    <button type="button" class="secondary" id="addLineBtn" style="margin-top:8px">+ Thêm dòng thiết bị</button>
+    <h2 style="margin-top:6px">2. Thiết bị cần giữ chỗ (kèm vốn ước tính)</h2>
+    <div id="assetLinesWrap"></div>
+    <button type="button" class="secondary" id="addAssetLineBtn" style="margin-top:8px">+ Thêm dòng thiết bị</button>
+
+    <h2 style="margin-top:16px">3. Chi phí phát sinh (vận chuyển, nhân công, kỹ sư chuyên ngành...)</h2>
+    <div id="costLinesWrap"></div>
+    <button type="button" class="secondary" id="addCostLineBtn" style="margin-top:8px">+ Thêm dòng chi phí</button>
+
+    <h2 style="margin-top:16px">4. Giá bán &amp; ghi chú</h2>
+    <div class="row">
+      <div><label>Giá bán đã thương lượng (VNĐ)</label><input type="number" min="0" step="1000" name="salePrice" id="salePrice" placeholder="Chưa chốt giá thì để trống"></div>
+      <div style="grid-column:1/-1"><label>Ghi chú báo giá</label><textarea name="quoteNote" id="quoteNote" rows="2" placeholder="Điều khoản, ghi chú riêng cho báo giá này..."></textarea></div>
+    </div>
+
+    <div class="card" style="background:var(--bg);margin-top:6px">
+      <div class="grid">
+        <div class="stat"><div class="num" id="sumAssetCost">0 đ</div><div class="label">Vốn thiết bị</div></div>
+        <div class="stat"><div class="num" id="sumExtraCost">0 đ</div><div class="label">Chi phí phát sinh</div></div>
+        <div class="stat"><div class="num" id="sumTotalCost">0 đ</div><div class="label">Tổng vốn + chi phí</div></div>
+        <div class="stat"><div class="num" id="sumProfit">0 đ</div><div class="label">Lợi nhuận dự kiến</div></div>
+      </div>
+    </div>
 
     <div class="flex" style="margin-top:16px">
-      <button type="submit">Tạo giữ chỗ</button>
+      <button type="submit" id="submitBtn">Tạo báo giá</button>
     </div>
   </form>
 </main>
@@ -51,15 +70,39 @@
 let profile = null;
 let ALL_ASSETS = [];
 let lineSeq = 0;
+let editRentalId = null;
+
+const COST_SUGGESTIONS = ['Vận chuyển', 'Nhân công', 'Kỹ sư chuyên ngành'];
 
 function fillDatalist(id, values) {
   const uniq = [...new Set(values.map(v => (v || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
   document.getElementById(id).innerHTML = uniq.map(v => `<option value="${esc(v)}">`).join('');
 }
 
-function addLine() {
+function recalcSummary() {
+  const assetLines = [...document.querySelectorAll('#assetLinesWrap [data-line]')].map(row => ({
+    quantity: Number(row.querySelector('[data-f="quantity"]').value) || 0,
+    unit_cost: Number(row.querySelector('[data-f="unit_cost"]').value) || 0
+  }));
+  const costLines = [...document.querySelectorAll('#costLinesWrap [data-line]')].map(row => ({
+    amount: Number(row.querySelector('[data-f="amount"]').value) || 0
+  }));
+  const assetCost = round2(assetLines.reduce((s, l) => s + l.quantity * l.unit_cost, 0));
+  const extraCost = round2(costLines.reduce((s, l) => s + l.amount, 0));
+  const totalCost = round2(assetCost + extraCost);
+  const price = Number(document.getElementById('salePrice').value) || 0;
+  const profit = round2(price - totalCost);
+  document.getElementById('sumAssetCost').textContent = money(assetCost);
+  document.getElementById('sumExtraCost').textContent = money(extraCost);
+  document.getElementById('sumTotalCost').textContent = money(totalCost);
+  const profitEl = document.getElementById('sumProfit');
+  profitEl.textContent = money(profit);
+  profitEl.style.color = profit < 0 ? 'var(--danger)' : 'var(--success)';
+}
+
+function addAssetLine(prefill) {
   const n = lineSeq++;
-  const wrap = document.getElementById('linesWrap');
+  const wrap = document.getElementById('assetLinesWrap');
   const row = document.createElement('div');
   row.className = 'card';
   row.style.cssText = 'background:var(--bg);margin-bottom:10px;padding:14px';
@@ -70,7 +113,8 @@ function addLine() {
       <div><label>Chủng loại</label><input data-f="category" list="categoryList-${n}" autocomplete="off"><datalist id="categoryList-${n}"></datalist></div>
       <div><label>Nhãn hiệu</label><input data-f="brand" list="brandList-${n}" autocomplete="off"><datalist id="brandList-${n}"></datalist></div>
       <div><label>Model *</label><input data-f="model" list="modelList-${n}" autocomplete="off" required><datalist id="modelList-${n}"></datalist></div>
-      <div><label>Số lượng cần giữ *</label><input data-f="quantity" type="number" min="1" step="1" value="1" required></div>
+      <div><label>Số lượng *</label><input data-f="quantity" type="number" min="1" step="1" value="1" required></div>
+      <div><label>Vốn ước tính / máy (VNĐ)</label><input data-f="unit_cost" type="number" min="0" step="1000" value="0"></div>
       <div style="display:flex;align-items:flex-end;gap:8px">
         <button type="button" class="secondary" data-check style="flex:1">Kiểm tra khả dụng</button>
         <button type="button" class="danger" data-remove style="padding:9px 12px">Xoá</button>
@@ -84,8 +128,55 @@ function addLine() {
   fillDatalist('brandList-' + n, ALL_ASSETS.map(a => a.brand));
   fillDatalist('modelList-' + n, ALL_ASSETS.map(a => a.model));
 
-  row.querySelector('[data-remove]').addEventListener('click', () => row.remove());
+  row.querySelector('[data-remove]').addEventListener('click', () => { row.remove(); recalcSummary(); });
   row.querySelector('[data-check]').addEventListener('click', () => checkLine(row));
+  row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', recalcSummary));
+
+  const modelInput = row.querySelector('[data-f="model"]');
+  modelInput.addEventListener('change', () => {
+    const costInput = row.querySelector('[data-f="unit_cost"]');
+    if (Number(costInput.value) > 0) return; // da nhap tay thi khong ghi de
+    const matches = ALL_ASSETS.filter(a => (a.model || '').trim().toLowerCase() === modelInput.value.trim().toLowerCase());
+    if (matches.length) {
+      const avg = matches.reduce((s, a) => s + Number(a.import_value || 0), 0) / matches.length;
+      costInput.value = Math.round(avg);
+      recalcSummary();
+    }
+  });
+
+  if (prefill) {
+    Object.keys(prefill).forEach(f => {
+      const el = row.querySelector(`[data-f="${f}"]`);
+      if (el && prefill[f] !== undefined && prefill[f] !== null) el.value = prefill[f];
+    });
+  }
+}
+
+function addCostLine(prefill) {
+  const n = lineSeq++;
+  const wrap = document.getElementById('costLinesWrap');
+  const row = document.createElement('div');
+  row.className = 'card';
+  row.style.cssText = 'background:var(--bg);margin-bottom:10px;padding:14px';
+  row.dataset.line = n;
+  row.innerHTML = `
+    <div class="row" style="margin-bottom:0">
+      <div style="grid-column:1/3"><label>Loại chi phí *</label><input data-f="cost_label" list="costSuggest-${n}" autocomplete="off" required placeholder="VD: Vận chuyển"><datalist id="costSuggest-${n}">${COST_SUGGESTIONS.map(s => `<option value="${s}">`).join('')}</datalist></div>
+      <div><label>Số tiền (VNĐ) *</label><input data-f="amount" type="number" min="0" step="1000" value="0" required></div>
+      <div style="display:flex;align-items:flex-end">
+        <button type="button" class="danger" data-remove style="padding:9px 12px">Xoá</button>
+      </div>
+    </div>
+  `;
+  wrap.appendChild(row);
+  row.querySelector('[data-remove]').addEventListener('click', () => { row.remove(); recalcSummary(); });
+  row.querySelectorAll('input').forEach(inp => inp.addEventListener('input', recalcSummary));
+  if (prefill) {
+    Object.keys(prefill).forEach(f => {
+      const el = row.querySelector(`[data-f="${f}"]`);
+      if (el && prefill[f] !== undefined && prefill[f] !== null) el.value = prefill[f];
+    });
+  }
 }
 
 async function checkLine(row) {
@@ -99,7 +190,7 @@ async function checkLine(row) {
   if (!start || !end) { toast('Chọn thời gian show trước đã', 'error'); return; }
   avail.textContent = 'Đang kiểm tra...';
   try {
-    const r = await checkAvailability(get('asset_group'), get('category'), get('brand'), model, start, end);
+    const r = await checkAvailability(get('asset_group'), get('category'), get('brand'), model, start, end, editRentalId);
     const ok = r.available >= qty;
     avail.innerHTML = `Tổng kho: <strong>${r.total}</strong> · Đang bận (thuê/giữ chỗ trùng ngày): <strong>${r.held}</strong> · Còn trống: <strong style="color:${ok ? 'var(--success)' : 'var(--danger)'}">${r.available}</strong>${ok ? '' : ' — không đủ so với số lượng yêu cầu!'}`;
   } catch (e) {
@@ -108,24 +199,41 @@ async function checkLine(row) {
   }
 }
 
-document.getElementById('addLineBtn').addEventListener('click', addLine);
+document.getElementById('addAssetLineBtn').addEventListener('click', () => addAssetLine());
+document.getElementById('addCostLineBtn').addEventListener('click', () => addCostLine());
+document.getElementById('salePrice').addEventListener('input', recalcSummary);
+
+function collectLines() {
+  const assetLines = [...document.querySelectorAll('#assetLinesWrap [data-line]')].map(row => {
+    const get = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
+    return {
+      item_type: 'asset',
+      asset_group: get('asset_group'), category: get('category'), brand: get('brand'),
+      model: get('model'), quantity: Number(get('quantity')) || 0, unit_cost: Number(get('unit_cost')) || 0
+    };
+  });
+  const costLines = [...document.querySelectorAll('#costLinesWrap [data-line]')].map(row => {
+    const get = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
+    return { item_type: 'cost', cost_label: get('cost_label'), amount: Number(get('amount')) || 0 };
+  });
+  return [...assetLines, ...costLines];
+}
 
 document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd.entries());
-  const lines = [...document.querySelectorAll('#linesWrap [data-line]')].map(row => {
-    const get = (f) => row.querySelector(`[data-f="${f}"]`).value.trim();
-    return {
-      asset_group: get('asset_group'), category: get('category'), brand: get('brand'),
-      model: get('model'), quantity: Number(get('quantity')) || 0
-    };
-  });
-  const btn = e.target.querySelector('button[type=submit]');
+  const lines = collectLines();
+  const btn = document.getElementById('submitBtn');
   btn.disabled = true;
   try {
-    const rental = await createReservation(profile, body, lines);
-    toast('Đã tạo giữ chỗ ' + rental.code, 'success');
+    if (editRentalId) {
+      await updateReservation(editRentalId, profile, body, lines);
+      toast('Đã cập nhật báo giá', 'success');
+    } else {
+      const rental = await createReservation(profile, body, lines);
+      toast('Đã tạo báo giá ' + rental.code, 'success');
+    }
     setTimeout(() => location.href = '/lich-su.html', 700);
   } catch (err) {
     toast(err.message, 'error');
@@ -133,13 +241,50 @@ document.getElementById('form').addEventListener('submit', async (e) => {
   }
 });
 
+async function loadForEdit(id) {
+  const rental = await getRental(id);
+  if (rental.status !== 'reserved') {
+    toast('Báo giá này đã chốt đơn hoặc đã huỷ, không sửa được nữa', 'error');
+    setTimeout(() => location.href = '/lich-su.html', 1200);
+    return;
+  }
+  editRentalId = id;
+  document.getElementById('pageTitle').textContent = 'Sửa báo giá ' + rental.code;
+  document.getElementById('submitBtn').textContent = 'Lưu thay đổi báo giá';
+  document.querySelector('[name="showName"]').value = rental.show_name || '';
+  document.querySelector('[name="customer"]').value = rental.customer || '';
+  document.querySelector('[name="location"]').value = rental.location || '';
+  document.querySelector('[name="startDateTime"]').value = (rental.start_datetime || '').slice(0, 16);
+  document.querySelector('[name="endDateTime"]').value = (rental.end_datetime || '').slice(0, 16);
+  document.getElementById('salePrice').value = rental.sale_price != null ? rental.sale_price : '';
+  document.getElementById('quoteNote').value = rental.quote_note || '';
+
+  const lines = await getReservationItems(id);
+  lines.forEach(l => {
+    if (l.item_type === 'cost') {
+      addCostLine({ cost_label: l.cost_label, amount: l.amount });
+    } else {
+      addAssetLine({ asset_group: l.asset_group, category: l.category, brand: l.brand, model: l.model, quantity: l.quantity, unit_cost: l.unit_cost });
+    }
+  });
+  recalcSummary();
+}
+
 async function init() {
   profile = await requireLogin();
   if (!profile) return;
   if (!requireAdmin(profile)) return;
   renderNav('/giu-cho.html', profile);
   ALL_ASSETS = await listAssets();
-  addLine();
+
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id');
+  if (id) {
+    await loadForEdit(id);
+  } else {
+    addAssetLine();
+  }
+  recalcSummary();
 }
 
 init().catch(e => toast(e.message, 'error'));

@@ -21,7 +21,7 @@
   <div class="flex between">
     <h1>Lịch sử xuất kho theo show</h1>
     <div class="flex">
-      <a href="/giu-cho.html" class="btn secondary" id="giuChoLink" style="display:none">+ Giữ chỗ trước</a>
+      <a href="/giu-cho.html" class="btn secondary" id="giuChoLink" style="display:none">+ Tạo báo giá</a>
       <a href="/xuat-kho.html" class="btn">+ Xuất kho / Quét QR</a>
     </div>
   </div>
@@ -44,15 +44,17 @@
       <h2 id="detailTitle"></h2>
       <div class="flex">
         <a id="exportLink" href="#" class="btn secondary">📊 Xuất Excel (biên bản)</a>
+        <a id="editQuoteLink" href="#" class="btn secondary" style="display:none">✏️ Sửa báo giá</a>
         <button id="confirmResBtn" class="success" style="display:none">Xác nhận thuê (chốt đơn)</button>
-        <button id="cancelResBtn" class="danger" style="display:none">Huỷ giữ chỗ</button>
+        <button id="cancelResBtn" class="danger" style="display:none">Huỷ báo giá</button>
         <button id="reopenBtn" class="secondary" style="display:none">↺ Mở lại show</button>
         <button id="deleteRentalBtn" class="danger" style="display:none">🗑️ Xoá show</button>
         <button class="secondary" id="closeDetail">Đóng</button>
       </div>
     </div>
     <p class="muted" id="detailMeta"></p>
-    <div id="reservedNote" class="muted" style="display:none;margin-bottom:10px;font-size:13px">Đây là dòng giữ chỗ theo model + số lượng, chưa gán máy cụ thể và chưa xuất kho. Khi khách chốt, bấm "Xác nhận thuê" rồi qua Xuất kho quét mã QR như bình thường.</div>
+    <div id="reservedNote" class="muted" style="display:none;margin-bottom:10px;font-size:13px">Đây là báo giá: dòng thiết bị theo model + số lượng (chưa gán máy cụ thể) kèm vốn ước tính, cộng dòng chi phí phát sinh và giá bán thương lượng. Có thể "Sửa báo giá" khi còn đang thương lượng. Khi khách chốt đơn, bấm "Xác nhận thuê" — show thật sẽ mở ra để qua Xuất kho quét mã QR như bình thường.</div>
+    <div id="quoteSummary" class="grid" style="display:none;margin-bottom:12px"></div>
     <div class="table-wrap">
       <table>
         <thead id="detailHead"><tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr></thead>
@@ -93,7 +95,7 @@ async function load() {
 }
 
 function statusLabel(s) {
-  return { active: 'Đang mở', closed: 'Đã đóng', returned: 'Đã trả kho', reserved: 'Giữ chỗ', cancelled: 'Đã huỷ' }[s] || s;
+  return { active: 'Đang mở', closed: 'Đã đóng', returned: 'Đã trả kho', reserved: 'Báo giá', cancelled: 'Đã huỷ' }[s] || s;
 }
 
 let currentDetailRental = null;
@@ -108,6 +110,8 @@ async function viewDetail(id) {
     `${r.customer || '—'} · ${r.location || '—'} · ${fmtDate(r.start_datetime)} → ${fmtDate(r.end_datetime)} · Trạng thái: ${statusLabel(r.status)}`;
   document.getElementById('reservedNote').style.display = isReserved ? '' : 'none';
   document.getElementById('exportLink').style.display = isReserved ? 'none' : '';
+  document.getElementById('editQuoteLink').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
+  document.getElementById('editQuoteLink').href = '/giu-cho.html?id=' + r.id;
   document.getElementById('confirmResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
   document.getElementById('cancelResBtn').style.display = (isReserved && isAdmin(profile)) ? '' : 'none';
   document.getElementById('detailTotalWrap').style.display = (isAdmin(profile) && !isReserved) ? '' : 'none';
@@ -115,16 +119,41 @@ async function viewDetail(id) {
   document.getElementById('deleteRentalBtn').style.display = isAdmin(profile) ? '' : 'none';
 
   if (isReserved) {
-    document.getElementById('detailHead').innerHTML = '<tr><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model</th><th class="center">Số lượng giữ</th></tr>';
+    document.getElementById('detailHead').innerHTML = '<tr><th>Loại</th><th>Nhóm / Chủng loại</th><th>Nhãn hiệu</th><th>Model / Chi phí</th><th class="center">Số lượng</th><th class="right">Vốn hoặc chi phí</th><th class="right">Thành tiền</th></tr>';
     const lines = await getReservationItems(id);
-    document.getElementById('detailBody').innerHTML = lines.map(l => `
+    document.getElementById('detailBody').innerHTML = lines.map(l => {
+      const isCost = l.item_type === 'cost';
+      const lineTotal = isCost ? Number(l.amount || 0) : Number(l.unit_cost || 0) * Number(l.quantity || 0);
+      return `
       <tr>
-        <td>${esc([l.asset_group, l.category].filter(Boolean).join(' / ') || '—')}</td>
-        <td>${esc(l.brand || '—')}</td>
+        <td>${isCost ? '<span class="badge pending">Chi phí</span>' : '<span class="badge active">Thiết bị</span>'}</td>
+        <td>${isCost ? '—' : esc([l.asset_group, l.category].filter(Boolean).join(' / ') || '—')}</td>
+        <td>${isCost ? '—' : esc(l.brand || '—')}</td>
         <td>${esc(l.model)}</td>
         <td class="center">${l.quantity}</td>
-      </tr>`).join('') || '<tr><td colspan="4" class="muted center">Chưa có dòng giữ chỗ</td></tr>';
+        <td class="right">${isAdmin(profile) ? money(isCost ? l.amount : l.unit_cost) : '—'}</td>
+        <td class="right">${isAdmin(profile) ? money(lineTotal) : '—'}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted center">Chưa có dòng nào trong báo giá</td></tr>';
+
+    if (isAdmin(profile)) {
+      const summary = await getQuoteSummary(id, r.sale_price);
+      document.getElementById('quoteSummary').style.display = '';
+      document.getElementById('quoteSummary').innerHTML = `
+        <div class="stat"><div class="num">${money(summary.assetCost)}</div><div class="label">Vốn thiết bị</div></div>
+        <div class="stat"><div class="num">${money(summary.extraCost)}</div><div class="label">Chi phí phát sinh</div></div>
+        <div class="stat"><div class="num">${money(summary.totalCost)}</div><div class="label">Tổng vốn + chi phí</div></div>
+        <div class="stat"><div class="num">${r.sale_price != null ? money(r.sale_price) : '—'}</div><div class="label">Giá bán thương lượng</div></div>
+        <div class="stat"><div class="num" style="color:${summary.profit < 0 ? 'var(--danger)' : 'var(--success)'}">${r.sale_price != null ? money(summary.profit) : '—'}</div><div class="label">Lợi nhuận dự kiến</div></div>
+      `;
+      if (r.quote_note) {
+        document.getElementById('quoteSummary').innerHTML += `<div class="muted" style="grid-column:1/-1;font-size:13px">Ghi chú: ${esc(r.quote_note)}</div>`;
+      }
+    } else {
+      document.getElementById('quoteSummary').style.display = 'none';
+    }
   } else {
+    document.getElementById('quoteSummary').style.display = 'none';
     document.getElementById('detailHead').innerHTML = '<tr><th>Mã QR</th><th>Nhóm</th><th>Model</th><th>Kiểu KH</th><th class="right" id="detailDepHeader">Khấu hao trừ</th><th>Xuất lúc</th><th>Trả lúc</th></tr>';
     const items = await getRentalItems(id);
     document.getElementById('detailDepHeader').style.display = isAdmin(profile) ? '' : 'none';
