@@ -197,63 +197,31 @@ function attachZoomControl(scanner) {
   }
 }
 
-// Thu lan luot cac camera "sau" (nhieu dien thoai co 2-3 ong kinh sau: chinh, goc rong, tele...)
-// va chon ong kinh DAU TIEN co ho tro den flash (torch), thay vi luon lay ong kinh dau tien
-// theo nhan camera - vi mot so may liet ke ong kinh phu (khong co den) truoc ong kinh chinh,
-// khien nguoi dung phai tu bam "Doi camera" moi thay nut Bat den. Neu khong ong kinh sau nao
-// co torch (vd iPhone), dung lai o ong kinh dau tien nhu binh thuong.
-// Tra ve index (trong mang cameraList) cua camera da duoc chon va bat thanh cong.
-function _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// Thu goi scanner.start(), neu bi loi "dang trong qua trinh chuyen trang thai" (hay gap khi
-// stop() truoc do chua kip giai phong camera xong ma da goi start() ngay) thi doi 1 chut roi
-// thu lai 1 lan, thay vi bao loi luon - day la nguyen nhan pho bien gay "camera bi loi" tren
-// mot so dien thoai Android sau khi doi ong kinh lien tuc.
-async function _startWithRetry(scanner, target, startOptions, onScan) {
-  try {
-    await scanner.start(target, startOptions, onScan, () => {});
-  } catch (e) {
-    const msg = String((e && e.message) || e || '');
-    if (/transition|already|in progress/i.test(msg)) {
-      await _sleep(350);
-      await scanner.start(target, startOptions, onScan, () => {});
-    } else {
-      throw e;
-    }
-  }
-}
-
+// Mo camera SAU cua thiet bi. Ban truoc day co thu lan luot tung ong kinh (chinh, goc
+// rong, tele...) bang cach stop()/start() lien tuc de tu tim ong kinh co den flash -
+// nhung cach nay khong on dinh tren nhieu dien thoai Android (viec stop() chua kip giai
+// phong phan cung camera truoc khi start() ong kinh khac de gay loi "camera dang ban" /
+// "already under transition", dan den camera khong mo duoc). Nay don gian hoa lai: mo
+// BANG CONSTRAINT facingMode "environment" (de trinh duyet tu chon camera sau phu hop,
+// day la cach on dinh nhat, duoc chinh Android Chrome khuyen dung) - CHI mo 1 LAN duy
+// nhat, khong thu lai/doi ong kinh tu dong nua. Neu ong kinh duoc chon khong co den flash,
+// nguoi dung van bam nut "🔄 Đổi camera" de tu chuyen sang ong kinh khac nhu truoc gio.
 async function startBestBackCamera(scanner, cameraList, startOptions, onScan) {
-  const backCandidates = (cameraList || [])
-    .map((c, i) => ({ i, label: c.label || '' }))
-    .filter(c => /back|rear|environment|sau/i.test(c.label))
-    .map(c => c.i);
-  let order = backCandidates.length ? backCandidates : [Math.max(0, (cameraList || []).length - 1)];
-  if (order.length > 3) order = order.slice(0, 3); // gioi han so lan doi ong kinh tranh cycling qua nhieu tren may co 4+ camera sau
-
-  let lastErr = null;
-  for (let k = 0; k < order.length; k++) {
-    const idx = order[k];
+  try {
+    await scanner.start({ facingMode: { exact: 'environment' } }, startOptions, onScan, () => {});
+    return -1;
+  } catch (e) {
+    // Mot so may/trinh duyet khong ho tro facingMode "exact" -> thu lai bang deviceId
+    // cua camera co nhan "sau" dau tien tim thay, giong logic don gian truoc day.
+    const backCandidates = (cameraList || [])
+      .map((c, i) => ({ i, label: c.label || '' }))
+      .filter(c => /back|rear|environment|sau/i.test(c.label))
+      .map(c => c.i);
+    const idx = backCandidates.length ? backCandidates[0] : Math.max(0, (cameraList || []).length - 1);
     const target = cameraList[idx] ? cameraList[idx].id : { facingMode: 'environment' };
-    try {
-      await _startWithRetry(scanner, target, startOptions, onScan);
-      let torchOk = false;
-      try {
-        const caps = scanner.getRunningTrackCameraCapabilities && scanner.getRunningTrackCameraCapabilities();
-        const torch = caps && caps.torchFeature && caps.torchFeature();
-        torchOk = !!(torch && torch.isSupported && torch.isSupported());
-      } catch (e) { /* khong doc duoc capability -> coi nhu khong co torch, thu ong kinh khac */ }
-      if (torchOk || k === order.length - 1) return idx;
-      try { await scanner.stop(); } catch (e) {}
-      await _sleep(250); // cho camera vua stop giai phong hoan toan truoc khi mo ong kinh khac
-    } catch (e) {
-      lastErr = e;
-      try { await scanner.stop(); } catch (e2) {}
-      await _sleep(250);
-    }
+    await scanner.start(target, startOptions, onScan, () => {});
+    return idx;
   }
-  if (lastErr) throw lastErr;
-  return order[order.length - 1];
 }
 
 // Chi tu dong focus (bat ban phim ao) vao o nhap ma tren thiet bi KHONG cam ung — vi muc dich
